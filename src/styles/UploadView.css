@@ -37,6 +37,12 @@
   border: 1px solid #f59e0b;
 }
 
+.upload-alert-info {
+  background-color: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #3b82f6;
+}
+
 .upload-alert-text {
   font-size: 0.875rem;
   margin: 0;
@@ -67,4 +73,19 @@
 .upload-file-name {
   font-size: 0.875rem;
   color: #64748b;
+}
+
+.upload-section-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 2rem 0 0 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.upload-section-divider {
+  margin: 2rem 0;
+  border-top: 2px solid #e5e7eb;
 }

@@ -105,6 +105,8 @@ const StudentsView = ({
     { id: "missing-email", label: "Students without email" },
     { id: "missing-grade", label: "Students without grade" },
     { id: "missing-teacher", label: "Students without teacher" },
+    { id: "retakes", label: "Retake photos only" },
+    { id: "makeups", label: "Makeup students only" },
   ];
 
   // Click-away effect for dropdowns
@@ -196,6 +198,16 @@ const StudentsView = ({
         case "missing-teacher":
           filtered = filtered.filter(
             (student) => !student.Teacher || student.Teacher.trim() === ""
+          );
+          break;
+        case "retakes":
+          filtered = filtered.filter(
+            (student) => student.photoType === "retake"
+          );
+          break;
+        case "makeups":
+          filtered = filtered.filter(
+            (student) => student.photoType === "makeup"
           );
           break;
         default:
@@ -522,7 +534,7 @@ const StudentsView = ({
       onConfirm: async () => {
         setConfirmDialog(null);
         try {
-          await onDeletePhotoVersion(version);
+          await onDeletePhotoVersion(showVersionHistory, version);
           // Refresh the version list
           const updatedVersions = await onLoadPhotoVersions(
             showVersionHistory.id
@@ -702,6 +714,17 @@ const StudentsView = ({
                               hour: "2-digit",
                               minute: "2-digit",
                             })}
+                            {version.dateTaken && (
+                              <>
+                                <br />
+                                <span style={{ fontSize: "0.6rem" }}>
+                                  Taken:{" "}
+                                  {new Date(
+                                    version.dateTaken
+                                  ).toLocaleDateString()}
+                                </span>
+                              </>
+                            )}
                           </div>
                           <div
                             style={{
@@ -1243,6 +1266,17 @@ const StudentsView = ({
                                   </div>
                                 </>
                               )}
+                              {/* Photo type badge (Retake/Makeup) - moved to bottom left */}
+                              {student.photoType &&
+                                student.photoType !== "original" && (
+                                  <div className="photo-type-badge-bottom">
+                                    <span
+                                      className={`photo-type-label photo-type-${student.photoType}`}
+                                    >
+                                      {student.photoType}
+                                    </span>
+                                  </div>
+                                )}
                             </>
                           ) : (
                             <div className="student-no-photo">
@@ -1298,6 +1332,28 @@ const StudentsView = ({
                           {student["Email(s)"] && (
                             <p className="student-email">
                               {student["Email(s)"]}
+                            </p>
+                          )}
+                          {student.retakeDate && (
+                            <p
+                              className="student-detail"
+                              style={{ fontSize: "0.7rem", color: "#9333ea" }}
+                            >
+                              Retake:{" "}
+                              {new Date(
+                                student.retakeDate
+                              ).toLocaleDateString()}
+                            </p>
+                          )}
+                          {student.makeupDate && (
+                            <p
+                              className="student-detail"
+                              style={{ fontSize: "0.7rem", color: "#d97706" }}
+                            >
+                              Makeup:{" "}
+                              {new Date(
+                                student.makeupDate
+                              ).toLocaleDateString()}
                             </p>
                           )}
                         </div>

@@ -50,15 +50,105 @@
   border: 1px solid #e2e8f0;
 }
 
+.school-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
 .school-name {
   font-size: 1rem;
   font-weight: 600;
   color: #1e293b;
-  margin: 0 0 0.5rem 0;
+  margin: 0;
 }
 
 .school-detail {
   font-size: 0.875rem;
   color: #64748b;
   margin: 0.25rem 0;
+}
+
+.school-edit-button {
+  background-color: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  padding: 0.375rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.school-edit-button:hover {
+  background-color: #e2e8f0;
+  color: #374151;
+}
+
+.export-settings-section {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.export-settings-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 0.5rem 0;
+}
+
+.export-settings-description {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0 0 1rem 0;
+}
+
+.export-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.export-setting-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.export-setting-item input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.school-exports {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.school-exports-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  margin: 0 0 0.375rem 0;
+}
+
+.school-exports-list {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.export-badge {
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  background-color: #dbeafe;
+  color: #1d4ed8;
+  border-radius: 0.25rem;
+  font-weight: 500;
 }

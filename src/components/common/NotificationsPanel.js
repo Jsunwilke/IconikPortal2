@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Bell, X, Clock, User, School } from "lucide-react";
 import {
   subscribeToUserNotifications,
@@ -13,27 +13,28 @@ const NotificationsPanel = ({ user, userRole }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [allNotifications, setAllNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [allNotificationsLoaded, setAllNotificationsLoaded] = useState(false); // Add this state
   const panelRef = useRef(null);
+
+  // Only show notifications for studio users - MOVED TO END
+  const isStudioUser = userRole === "studio";
 
   // Debug logging
   useEffect(() => {
+    if (!isStudioUser) return;
     console.log("NotificationsPanel mounted with:", {
       userEmail: user?.email,
       userRole,
       userId: user?.uid,
     });
-  }, []);
-
-  // Only show notifications for studio users
-  if (userRole !== "studio") {
-    console.log("NotificationsPanel: Not a studio user, hiding panel");
-    return null;
-  }
+  }, [user?.email, userRole, user?.uid, isStudioUser]); // Add dependencies
 
   // Subscribe to real-time unread notifications
   useEffect(() => {
-    if (!user?.uid) {
-      console.log("NotificationsPanel: No user ID, skipping subscription");
+    if (!isStudioUser || !user?.uid) {
+      console.log(
+        "NotificationsPanel: No user ID or not studio user, skipping subscription"
+      );
       return;
     }
 
@@ -49,37 +50,29 @@ const NotificationsPanel = ({ user, userRole }) => {
           count: newNotifications.length,
           notifications: newNotifications,
         });
-        setNotifications(newNotifications);
+        setNotifications((prevNotifications) => {
+          // Only update if notifications actually changed
+          if (
+            JSON.stringify(prevNotifications) !==
+            JSON.stringify(newNotifications)
+          ) {
+            return newNotifications;
+          }
+          return prevNotifications;
+        });
         setUnreadCount(newNotifications.length);
       }
     );
 
     return () => {
       console.log("NotificationsPanel: Cleaning up notification listener");
-      unsubscribe();
-    };
-  }, [user?.uid]);
-
-  // Load all notifications when panel opens
-  useEffect(() => {
-    if (isOpen && user?.uid && allNotifications.length === 0) {
-      loadAllNotifications();
-    }
-  }, [isOpen, user?.uid]);
-
-  // Click away to close panel
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (panelRef.current && !panelRef.current.contains(event.target)) {
-        setIsOpen(false);
+      if (unsubscribe) {
+        unsubscribe();
       }
     };
+  }, [user?.uid, isStudioUser]);
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const loadAllNotifications = async () => {
+  const loadAllNotifications = useCallback(async () => {
     setLoading(true);
     try {
       console.log(
@@ -92,11 +85,38 @@ const NotificationsPanel = ({ user, userRole }) => {
         allNotifs.length
       );
       setAllNotifications(allNotifs);
+      setAllNotificationsLoaded(true); // Mark as loaded
     } catch (error) {
       console.error("Error loading notifications:", error);
     }
     setLoading(false);
-  };
+  }, [user?.uid]); // Add dependency for user.uid
+
+  // Load all notifications when panel opens - FIXED
+  useEffect(() => {
+    if (!isStudioUser || !isOpen || !user?.uid || allNotificationsLoaded) {
+      return;
+    }
+    loadAllNotifications();
+  }, [
+    isOpen,
+    user?.uid,
+    allNotificationsLoaded,
+    loadAllNotifications,
+    isStudioUser,
+  ]); // Add loadAllNotifications to dependencies
+
+  // Click away to close panel
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (panelRef.current && !panelRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleNotificationClick = async (notification) => {
     if (!notification.userRead) {
@@ -160,59 +180,55 @@ const NotificationsPanel = ({ user, userRole }) => {
     if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays === 1) return "Yesterday";
     if (diffDays < 7) return `${diffDays}d ago`;
 
     return date.toLocaleDateString();
   };
 
   const renderChanges = (changes) => {
-    if (!changes || changes.length === 0) return "No specific changes recorded";
-
-    if (changes.length === 1) {
-      const change = changes[0];
-      return (
-        <div className="notification-change">
-          <strong>{change.field}:</strong> "{change.oldValue}" → "
-          {change.newValue}"
-        </div>
-      );
+    if (!changes || !Array.isArray(changes)) {
+      return <div className="notification-changes">No changes data</div>;
     }
 
     return (
-      <div className="notification-changes">
-        <div className="notification-changes-summary">
-          {changes.length} fields updated:
-        </div>
-        <div className="notification-changes-list">
-          {changes.slice(0, 2).map((change, index) => (
-            <div key={index} className="notification-change-item">
-              <span className="change-field">{change.field}</span>
-            </div>
-          ))}
-          {changes.length > 2 && (
-            <div className="notification-changes-more">
-              +{changes.length - 2} more
-            </div>
-          )}
-        </div>
+      <div className="notification-changes notification-changes-compact">
+        {changes.slice(0, 3).map((change, index) => (
+          <div
+            key={index}
+            className="notification-change-item notification-change-item-compact"
+          >
+            <span className="change-field change-field-compact">
+              {change.field}:
+            </span>
+            <span className="change-values change-values-compact">
+              "{change.oldValue || "empty"}" → "{change.newValue || "empty"}"
+            </span>
+          </div>
+        ))}
+        {changes.length > 3 && (
+          <div className="notification-changes-more notification-changes-more-compact">
+            +{changes.length - 3} more changes
+          </div>
+        )}
       </div>
     );
   };
 
-  const displayNotifications = isOpen ? notifications : notifications; // Always show only unread in dropdown
+  // Determine which notifications to display
+  const displayNotifications = isOpen ? allNotifications : notifications;
 
-  console.log("NotificationsPanel: Rendering with:", {
-    unreadCount,
-    isOpen,
-    displayNotificationsCount: displayNotifications.length,
-    userRole,
-  });
+  // Early return for non-studio users AFTER all hooks
+  if (!isStudioUser) {
+    console.log("NotificationsPanel: Not a studio user, hiding panel");
+    return null;
+  }
 
   return (
     <div className="notifications-container" ref={panelRef}>
       {/* Notification Bell Button */}
       <button
-        className="notifications-button"
+        className={`notifications-bell ${unreadCount > 0 ? "has-unread" : ""}`}
         onClick={togglePanel}
         title={`${unreadCount} unread notifications`}
       >

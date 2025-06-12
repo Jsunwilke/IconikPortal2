@@ -9,7 +9,7 @@ const LoginForm = ({ onLogin }) => {
 
   const handleSubmit = () => {
     if (email && password) {
-      onLogin(email, password);
+      onLogin({ email, password }); // Fixed: Pass as object instead of separate parameters
     }
   };
 

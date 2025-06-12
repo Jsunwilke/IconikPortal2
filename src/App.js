@@ -4,8 +4,23 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
-import { getDoc, doc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import {
+  getDoc,
+  doc,
+  setDoc,
+  collection,
+  getDocs,
+  deleteDoc,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+  listAll,
+  getMetadata,
+} from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
 import { auth, db, storage, functions } from "./services/firebase";
 
@@ -25,6 +40,7 @@ import StudentsView from "./components/views/StudentsView";
 import SchoolsView from "./components/views/SchoolsView";
 import NotificationsView from "./components/views/NotificationsView";
 import FilesView from "./components/views/FilesView";
+import YearbookProofingView from "./components/views/YearbookProofingView";
 
 // Import services
 import {
@@ -34,6 +50,8 @@ import {
   loadPhotos,
   handleCSVUpload,
   handlePhotoUpload,
+  handleRetakesCSVUpload,
+  handleRetakesPhotoUpload,
   updateStudent,
   deleteStudent,
   createSchool,
@@ -56,34 +74,23 @@ const App = () => {
   const [schools, setSchools] = useState([]);
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [students, setStudents] = useState([]);
+  const [filteredStudents, setFilteredStudents] = useState([]);
   const [photos, setPhotos] = useState([]);
-  const [filteredStudents, setFilteredStudents] = useState([]); // Track filtered students
   const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadStats, setUploadStats] = useState(null);
+  const [hasYearbookProofs, setHasYearbookProofs] = useState(false);
+
+  // Modal states
+  const [pspaInstructionModal, setPspaInstructionModal] = useState(false);
   const [exportResult, setExportResult] = useState(null);
   const [idValidationModal, setIdValidationModal] = useState(null);
-  const [pspaInstructionModal, setPspaInstructionModal] = useState(false);
   const [fourUpSortModal, setFourUpSortModal] = useState(false);
 
-  // Use useRef for cancellation flag
+  // Refs for cancellation
   const exportCancelledRef = useRef(false);
+  const unsubscribeStudentsRef = useRef(null);
 
-  const cancelExport = () => {
-    exportCancelledRef.current = true;
-    setUploadProgress("Cancelling export... Please wait");
-    setUploadStats((prev) =>
-      prev ? { ...prev, operation: "Cancelling Export" } : null
-    );
-  };
-
-  const showExportResult = (result) => {
-    setExportResult(result);
-  };
-
-  const closeExportResult = () => {
-    setExportResult(null);
-  };
-
+  // Authentication
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -93,645 +100,713 @@ const App = () => {
           if (userDoc.exists()) {
             const userData = userDoc.data();
             setUserRole(userData.role);
+
             if (userData.role === "school") {
               setSelectedSchool(userData.schoolId);
             }
-          } else {
-            console.error("User document not found in Firestore");
-            alert("User profile not found. Please contact administrator.");
           }
         } catch (error) {
           console.error("Error fetching user data:", error);
-          alert("Error loading user profile: " + error.message);
         }
       } else {
         setUser(null);
         setUserRole(null);
+        setSelectedSchool(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
+  // Load schools data
+  const loadSchoolsData = async () => {
+    try {
+      const schoolsData = await loadSchools();
+      setSchools(schoolsData);
+    } catch (error) {
+      console.error("Error loading schools:", error);
+    }
+  };
+
   useEffect(() => {
-    if (user && userRole) {
+    if (userRole === "studio" || userRole === "school") {
       loadSchoolsData();
     }
-  }, [user, userRole]);
+  }, [userRole]);
 
+  // Check for yearbook proofs when school is selected
+  const checkForYearbookProofs = async (schoolId) => {
+    try {
+      console.log("Checking for yearbook proofs for school:", schoolId);
+
+      const storageRef = ref(
+        storage,
+        `schools/${schoolId}/yearbooks/versions/`
+      );
+      const listResult = await listAll(storageRef);
+
+      const hasProofs = listResult.items.length > 0;
+      console.log(`School ${schoolId} has yearbook proofs:`, hasProofs);
+
+      setHasYearbookProofs(hasProofs);
+    } catch (error) {
+      console.error("Error checking for yearbook proofs:", error);
+      setHasYearbookProofs(false);
+    }
+  };
+
+  // Check for yearbook proofs when school changes
   useEffect(() => {
     if (selectedSchool) {
-      // Set up real-time listener for students
-      const unsubscribeStudents = subscribeToStudents(
+      checkForYearbookProofs(selectedSchool);
+    } else {
+      setHasYearbookProofs(false);
+    }
+  }, [selectedSchool]);
+
+  // Load students and photos when school is selected
+  useEffect(() => {
+    if (selectedSchool) {
+      // Clean up previous subscription
+      if (unsubscribeStudentsRef.current) {
+        unsubscribeStudentsRef.current();
+        unsubscribeStudentsRef.current = null;
+      }
+
+      // Subscribe to students for real-time updates
+      unsubscribeStudentsRef.current = subscribeToStudents(
         selectedSchool,
-        (newStudents) => {
-          console.log(
-            "Students updated via real-time listener:",
-            newStudents.length
-          );
-          setStudents(newStudents);
-        }
+        setStudents
       );
 
-      loadPhotosData();
-
-      // Cleanup function
-      return () => {
-        console.log("Cleaning up students listener");
-        unsubscribeStudents();
-      };
+      // Load photos
+      loadPhotos(selectedSchool).then(setPhotos).catch(console.error);
     } else {
       setStudents([]);
       setPhotos([]);
     }
+
+    return () => {
+      if (unsubscribeStudentsRef.current) {
+        unsubscribeStudentsRef.current();
+        unsubscribeStudentsRef.current = null;
+      }
+    };
   }, [selectedSchool]);
 
-  const loadSchoolsData = async () => {
+  // Login handler
+  const handleLogin = async ({ email, password }) => {
     try {
-      const schoolsList = await loadSchools();
-      setSchools(schoolsList);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-
-  const loadStudentsData = async () => {
-    try {
-      const studentsList = await loadStudents(selectedSchool);
-      setStudents(studentsList);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-
-  const loadPhotosData = async () => {
-    try {
-      const photosList = await loadPhotos(selectedSchool);
-      setPhotos(photosList);
-    } catch (error) {
-      console.error("Error loading photos:", error);
-    }
-  };
-
-  const handleLogin = async (email, password) => {
-    try {
-      setLoading(true);
       await signInWithEmailAndPassword(auth, email, password);
+      return true;
     } catch (error) {
-      console.error("Login error:", error);
-      let errorMessage = "Login failed: ";
-      switch (error.code) {
-        case "auth/invalid-email":
-          errorMessage += "Invalid email address.";
-          break;
-        case "auth/user-disabled":
-          errorMessage += "This account has been disabled.";
-          break;
-        case "auth/user-not-found":
-          errorMessage += "No account found with this email.";
-          break;
-        case "auth/wrong-password":
-          errorMessage += "Incorrect password.";
-          break;
-        case "auth/invalid-credential":
-          errorMessage += "Invalid login credentials.";
-          break;
-        default:
-          errorMessage += error.message;
-      }
-      alert(errorMessage);
-      setLoading(false);
+      throw error;
     }
   };
 
+  // Logout handler
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setActiveView("dashboard");
-      setSelectedSchool(null);
-      setStudents([]);
-      setPhotos([]);
     } catch (error) {
-      console.error("Logout error:", error);
-      alert("Error logging out: " + error.message);
+      console.error("Error signing out:", error);
     }
   };
 
+  // CSV Upload handler
   const handleCSVUploadWrapper = async (file) => {
     try {
+      exportCancelledRef.current = false;
       const result = await handleCSVUpload(
         file,
         selectedSchool,
-        setUploadProgress
+        setUploadProgress,
+        setUploadStats,
+        exportCancelledRef
       );
-      setUploadProgress(null);
-      showExportResult({
-        type: "csv_upload",
-        success: true,
-        title: "CSV Upload Complete",
-        message:
-          "Your student data has been successfully imported and is now available in the system.",
-        stats: {
-          totalCount: result.count,
-          successCount: result.count,
-          failedCount: 0,
-        },
-        details: [
-          `Imported ${result.count} student records`,
-          `Headers detected: ${result.headers.join(", ")}`,
-          "All data has been stored in Firebase Firestore",
-        ],
-      });
-      loadStudentsData();
+
+      if (result.success) {
+        alert(
+          `CSV uploaded successfully!\n\n${result.count} students imported.`
+        );
+      }
+
+      return result;
     } catch (error) {
-      setUploadProgress(null);
-      showExportResult({
-        type: "csv_upload",
-        success: false,
-        title: "CSV Upload Failed",
-        message:
-          "There was an error importing your student data. Please check your file format and try again.",
-        details: [
-          `Error: ${error.message}`,
-          "Make sure your CSV file has proper headers",
-          "Ensure the file is not corrupted or empty",
-        ],
-      });
+      alert(`Error uploading CSV: ${error.message}`);
+      throw error;
     }
   };
 
+  // Photo Upload handler
   const handlePhotoUploadWrapper = async (files) => {
     try {
+      exportCancelledRef.current = false;
       const result = await handlePhotoUpload(
         files,
         selectedSchool,
         setUploadProgress,
-        setUploadStats
+        setUploadStats,
+        exportCancelledRef
       );
-      setUploadProgress(null);
-      setUploadStats(null);
-      await loadPhotosData();
 
-      showExportResult({
-        type: "photo_upload",
-        success: result.success,
-        title: result.success
-          ? "Photo Upload Complete"
-          : "Photo Upload Completed with Issues",
-        message: result.success
-          ? "All photos have been successfully uploaded and are now available in the system."
-          : `Most photos were uploaded successfully, but ${result.failedCount} files encountered issues.`,
-        stats: result,
-        details: [
-          `Successfully uploaded: ${result.successCount} photos`,
-          ...(result.failedCount > 0
-            ? [`Failed uploads: ${result.failedCount} photos`]
-            : []),
-          "Photos are stored in Firebase Storage",
-          "You can now view and export student photos",
-        ],
-      });
+      if (result.success) {
+        alert(
+          `Photos uploaded successfully!\n\nTotal: ${result.totalCount}\nSuccess: ${result.successCount}\nFailed: ${result.failedCount}`
+        );
+
+        // Reload photos
+        const updatedPhotos = await loadPhotos(selectedSchool);
+        setPhotos(updatedPhotos);
+      } else if (result.failedCount > 0) {
+        const failedList = result.failedFiles
+          .map((f) => `${f.name}: ${f.error}`)
+          .join("\n");
+        alert(
+          `Photo upload completed with errors:\n\nTotal: ${result.totalCount}\nSuccess: ${result.successCount}\nFailed: ${result.failedCount}\n\nFailed files:\n${failedList}`
+        );
+      }
+
+      return result;
     } catch (error) {
-      setUploadProgress(null);
-      setUploadStats(null);
-      showExportResult({
-        type: "photo_upload",
+      alert(`Error uploading photos: ${error.message}`);
+      throw error;
+    }
+  };
+
+  // Retakes/Makeups handlers
+  const handleRetakesUpload = async (fileOrFiles, type) => {
+    try {
+      exportCancelledRef.current = false;
+
+      if (type === "csv") {
+        console.log("Processing retakes CSV upload");
+        const result = await handleRetakesCSVUpload(
+          fileOrFiles,
+          selectedSchool,
+          setUploadProgress,
+          setUploadStats
+        );
+
+        if (result.success) {
+          alert(
+            `Retakes/Makeups CSV processed successfully!\n\nRetakes: ${result.retakeCount}\nMakeups: ${result.makeupCount}\nTotal: ${result.totalCount}`
+          );
+
+          // Reload students to show the updated photoType badges
+          if (unsubscribeStudentsRef.current) {
+            const updatedStudents = await loadStudents(selectedSchool);
+            setStudents(updatedStudents);
+          }
+        }
+
+        return result;
+      } else if (type === "photos") {
+        console.log("Processing retakes photos upload");
+        console.log("Files to upload:", fileOrFiles);
+
+        const result = await handleRetakesPhotoUpload(
+          fileOrFiles,
+          selectedSchool,
+          setUploadProgress,
+          setUploadStats
+        );
+
+        if (result.success) {
+          alert(
+            `Retakes/Makeups photos uploaded successfully!\n\nRetakes: ${result.retakeCount}\nMakeups: ${result.makeupCount}\nTotal: ${result.totalCount}`
+          );
+
+          // Reload photos
+          const updatedPhotos = await loadPhotos(selectedSchool);
+          setPhotos(updatedPhotos);
+        }
+
+        return result;
+      }
+    } catch (error) {
+      console.error(`Error processing retakes/makeups:`, error);
+      alert(`Error processing retakes/makeups: ${error.message}`);
+      throw error;
+    }
+  };
+
+  // Export handlers
+  const handleExportCSV = async () => {
+    try {
+      exportCancelledRef.current = false;
+      const result = await exportToCSV(students, selectedSchool, schools);
+      setExportResult(result);
+    } catch (error) {
+      setExportResult({
         success: false,
-        title: "Photo Upload Failed",
-        message: "A critical error occurred during the photo upload process.",
-        details: [
-          `Error: ${error.message}`,
-          "Please try uploading fewer files at once",
-          "Ensure all files are valid image formats",
-        ],
+        title: "Export Failed",
+        message: "Failed to export CSV file.",
+        details: [`Error: ${error.message}`],
       });
     }
   };
 
-  const handleExportCSV = () => {
-    const result = exportToCSV(students, selectedSchool, schools);
-    showExportResult({
-      type: "csv_export",
-      ...result,
-    });
-  };
-
   const handleExportPSPA = async () => {
-    // Show instruction modal first
     setPspaInstructionModal(true);
   };
 
   const handlePSPAInstructionContinue = async () => {
     setPspaInstructionModal(false);
-    // Now proceed with the actual PSPA export
-    const result = await exportToPSPA(
-      students,
-      photos,
-      selectedSchool,
-      schools,
-      exportCancelledRef,
-      setUploadProgress,
-      setUploadStats
-    );
-    if (result) {
-      showExportResult(result);
+
+    // Validate student IDs first
+    const studentsWithPhotos = students.filter((student) => {
+      const photo = photos.find((p) => p.studentId === student.id);
+      return photo && photo.url;
+    });
+
+    if (studentsWithPhotos.length === 0) {
+      setExportResult({
+        success: false,
+        title: "No Students with Photos",
+        message: "Cannot create PSPA export without students who have photos.",
+        details: [
+          "Upload photos for students first",
+          "Photos must match student names exactly",
+        ],
+      });
+      return;
+    }
+
+    // Check for duplicate or missing IDs
+    const validationResult = validateStudentIds(studentsWithPhotos);
+
+    if (
+      validationResult.duplicateIds.length > 0 ||
+      validationResult.missingIds.length > 0
+    ) {
+      setIdValidationModal({
+        isOpen: true,
+        validationResult,
+        exportType: "PSPA",
+        onContinue: () => proceedWithPSPAExport(studentsWithPhotos),
+      });
+    } else {
+      proceedWithPSPAExport(studentsWithPhotos);
+    }
+  };
+
+  const proceedWithPSPAExport = async (studentsWithPhotos) => {
+    try {
+      exportCancelledRef.current = false;
+      const result = await exportToPSPA(
+        studentsWithPhotos,
+        photos,
+        setUploadProgress,
+        setUploadStats,
+        exportCancelledRef
+      );
+      setExportResult(result);
+    } catch (error) {
+      setExportResult({
+        success: false,
+        title: "PSPA Export Failed",
+        message: "Failed to create PSPA export.",
+        details: [`Error: ${error.message}`],
+      });
     }
   };
 
   const handleExportTeacherEase = async () => {
-    const result = await exportToTeacherEase(
-      students,
-      photos,
-      selectedSchool,
-      schools,
-      exportCancelledRef,
-      setUploadProgress,
-      setUploadStats,
-      setIdValidationModal
-    );
-    if (result) {
-      showExportResult(result);
+    // Similar validation pattern for TeacherEase export
+    const studentsWithPhotos = students.filter((student) => {
+      const photo = photos.find((p) => p.studentId === student.id);
+      return photo && photo.url;
+    });
+
+    if (studentsWithPhotos.length === 0) {
+      setExportResult({
+        success: false,
+        title: "No Students with Photos",
+        message:
+          "Cannot create TeacherEase export without students who have photos.",
+        details: [
+          "Upload photos for students first",
+          "Photos must match student names exactly",
+        ],
+      });
+      return;
+    }
+
+    const validationResult = validateStudentIds(studentsWithPhotos);
+
+    if (
+      validationResult.duplicateIds.length > 0 ||
+      validationResult.missingIds.length > 0
+    ) {
+      setIdValidationModal({
+        isOpen: true,
+        validationResult,
+        exportType: "TeacherEase",
+        onContinue: () => proceedWithTeacherEaseExport(studentsWithPhotos),
+      });
+    } else {
+      proceedWithTeacherEaseExport(studentsWithPhotos);
+    }
+  };
+
+  const proceedWithTeacherEaseExport = async (studentsWithPhotos) => {
+    try {
+      exportCancelledRef.current = false;
+      const result = await exportToTeacherEase(
+        studentsWithPhotos,
+        photos,
+        setUploadProgress,
+        setUploadStats,
+        exportCancelledRef
+      );
+      setExportResult(result);
+    } catch (error) {
+      setExportResult({
+        success: false,
+        title: "TeacherEase Export Failed",
+        message: "Failed to create TeacherEase export.",
+        details: [`Error: ${error.message}`],
+      });
     }
   };
 
   const handleExportSkyward = async () => {
-    const result = await exportToSkyward(
-      students,
-      photos,
-      selectedSchool,
-      schools,
-      exportCancelledRef,
-      setUploadProgress,
-      setUploadStats,
-      setIdValidationModal
-    );
-    if (result) {
-      showExportResult(result);
+    // Similar validation pattern for Skyward export
+    const studentsWithPhotos = students.filter((student) => {
+      const photo = photos.find((p) => p.studentId === student.id);
+      return photo && photo.url;
+    });
+
+    if (studentsWithPhotos.length === 0) {
+      setExportResult({
+        success: false,
+        title: "No Students with Photos",
+        message:
+          "Cannot create Skyward export without students who have photos.",
+        details: [
+          "Upload photos for students first",
+          "Photos must match student names exactly",
+        ],
+      });
+      return;
+    }
+
+    const validationResult = validateStudentIds(studentsWithPhotos);
+
+    if (
+      validationResult.duplicateIds.length > 0 ||
+      validationResult.missingIds.length > 0
+    ) {
+      setIdValidationModal({
+        isOpen: true,
+        validationResult,
+        exportType: "Skyward",
+        onContinue: () => proceedWithSkywardExport(studentsWithPhotos),
+      });
+    } else {
+      proceedWithSkywardExport(studentsWithPhotos);
+    }
+  };
+
+  const proceedWithSkywardExport = async (studentsWithPhotos) => {
+    try {
+      exportCancelledRef.current = false;
+      const result = await exportToSkyward(
+        studentsWithPhotos,
+        photos,
+        setUploadProgress,
+        setUploadStats,
+        exportCancelledRef
+      );
+      setExportResult(result);
+    } catch (error) {
+      setExportResult({
+        success: false,
+        title: "Skyward Export Failed",
+        message: "Failed to create Skyward export.",
+        details: [`Error: ${error.message}`],
+      });
     }
   };
 
   const handleExportFourUp = async () => {
-    // Show sort selection modal first
     setFourUpSortModal(true);
   };
 
-  const handleFourUpSortContinue = async (sortOptions, useFilteredData) => {
+  const handleFourUpSortContinue = async (sortOptions) => {
     setFourUpSortModal(false);
 
-    // Choose which students to export based on user selection
-    let studentsToExport;
-    if (useFilteredData && filteredStudents.length > 0) {
-      studentsToExport = filteredStudents;
-    } else {
-      studentsToExport = students; // Use all students
-    }
+    const studentsWithPhotos = students.filter((student) => {
+      const photo = photos.find((p) => p.studentId === student.id);
+      return photo && photo.url;
+    });
 
-    // Proceed with the 4-Up export
-    const result = await exportToFourUp(
-      studentsToExport,
-      photos,
-      selectedSchool,
-      schools,
-      exportCancelledRef,
-      setUploadProgress,
-      setUploadStats,
-      sortOptions
-    );
-    // Only show result modal if there's actually a result
-    // (legacy mode returns null when using browser save dialog)
-    if (result) {
-      showExportResult(result);
-    }
-  };
-
-  const handleUpdateStudent = async (studentId, updatedData) => {
-    try {
-      // Pass current user context to updateStudent for notifications
-      const currentUser = {
-        email: user.email,
-        role: userRole,
-        uid: user.uid,
-      };
-
-      await updateStudent(selectedSchool, studentId, updatedData, currentUser);
-      // No need to manually reload - real-time listener will update automatically
-      alert("Student updated successfully!");
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const handleDeleteStudent = async (studentId, studentData) => {
-    try {
-      await deleteStudent(selectedSchool, studentId, studentData);
-      // No need to manually reload - real-time listener will update automatically
-      alert("Student deleted successfully.");
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const handlePhotoReplace = async (student, newPhotoFile) => {
-    try {
-      setUploadProgress("Replacing photo...");
-      setUploadStats({
-        current: 1,
-        total: 1,
-        percentage: 50,
-        fileName: newPhotoFile.name,
-        operation: "Replacing Photo",
-      });
-
-      console.log("Original filename:", newPhotoFile.name);
-
-      // Find the student's current photo
-      const currentPhoto = photos.find((photo) => {
-        const firstName = student["First Name"]?.toLowerCase() || "";
-        const lastName = student["Last Name"]?.toLowerCase() || "";
-        const photoName = photo.name.toLowerCase();
-
-        if (student["Images"] && photo.name === student["Images"]) {
-          return true;
-        }
-
-        const expectedName = `${firstName}_${lastName}`;
-        if (photoName.includes(expectedName)) {
-          return true;
-        }
-
-        return photoName.includes(firstName) && photoName.includes(lastName);
-      });
-
-      // If there's a current photo, move it to version history instead of deleting
-      if (currentPhoto && currentPhoto.name !== newPhotoFile.name) {
-        try {
-          setUploadProgress("Archiving previous photo version...");
-          console.log(
-            "Moving current photo to version history:",
-            currentPhoto.name
-          );
-
-          // Create version history folder path
-          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          const versionPath = `schools/${selectedSchool}/photos/versions/${student.id}/${timestamp}_${currentPhoto.name}`;
-
-          // Get the current photo data
-          const currentPhotoRef = ref(
-            storage,
-            `schools/${selectedSchool}/photos/${currentPhoto.name}`
-          );
-          const currentPhotoBlob = await fetch(currentPhoto.url).then((r) =>
-            r.blob()
-          );
-
-          // Upload to version history
-          const versionRef = ref(storage, versionPath);
-          await uploadBytes(versionRef, currentPhotoBlob);
-
-          console.log("Previous version archived to:", versionPath);
-
-          // Now delete the current photo from main folder
-          const { deleteObject } = await import("firebase/storage");
-          await deleteObject(currentPhotoRef);
-          console.log("Current photo moved to version history");
-        } catch (archiveError) {
-          console.log("Could not archive current photo:", archiveError.message);
-          // Continue anyway - not critical if archiving fails
-        }
-      }
-
-      // Upload the new photo with original filename
-      setUploadProgress("Uploading new photo...");
-      const originalFileName = newPhotoFile.name;
-      const storagePath = `schools/${selectedSchool}/photos/${originalFileName}`;
-      const photoRef = ref(storage, storagePath);
-
-      console.log("Storage path:", storagePath);
-      console.log("Uploading file:", originalFileName);
-
-      await uploadBytes(photoRef, newPhotoFile);
-      const downloadURL = await getDownloadURL(photoRef);
-
-      console.log("Photo uploaded successfully:", downloadURL);
-
-      // Update the student record to reference the new photo
-      setUploadProgress("Updating student record...");
-      await updateStudent(selectedSchool, student.id, {
-        Images: originalFileName,
-      });
-
-      setUploadProgress(null);
-      setUploadStats(null);
-
-      // Refresh both students and photos to show the changes
-      await Promise.all([loadStudentsData(), loadPhotosData()]);
-
-      showExportResult({
-        type: "photo_replace",
-        success: true,
-        title: "Photo Replaced Successfully",
-        message: `Photo has been replaced with ${originalFileName}.`,
-        details: [
-          `New photo: ${originalFileName}`,
-          currentPhoto
-            ? `Previous version archived: ${currentPhoto.name}`
-            : "Added new photo",
-          "Student record updated",
-          "Previous versions can be restored if needed",
-          "Changes are immediately visible",
-        ],
-      });
-    } catch (error) {
-      console.error("Photo replacement error:", error);
-      setUploadProgress(null);
-      setUploadStats(null);
-      showExportResult({
-        type: "photo_replace",
+    if (studentsWithPhotos.length === 0) {
+      setExportResult({
         success: false,
-        title: "Photo Replace Failed",
-        message: "There was an error replacing the photo.",
+        title: "No Students with Photos",
+        message: "Cannot create 4-Up labels without students who have photos.",
         details: [
-          `Error: ${error.message}`,
-          "Please try again with a different image",
-          "Ensure the file is a valid image format",
+          "Upload photos for students first",
+          "Photos must match student names exactly",
         ],
       });
+      return;
+    }
+
+    try {
+      exportCancelledRef.current = false;
+      const selectedSchoolData = schools.find((s) => s.id === selectedSchool);
+      const result = await exportToFourUp(
+        studentsWithPhotos,
+        photos,
+        sortOptions,
+        selectedSchoolData?.name || "Unknown School",
+        setUploadProgress,
+        setUploadStats,
+        exportCancelledRef
+      );
+      setExportResult(result);
+    } catch (error) {
+      setExportResult({
+        success: false,
+        title: "4-Up Export Failed",
+        message: "Failed to create 4-Up labels.",
+        details: [`Error: ${error.message}`],
+      });
+    }
+  };
+
+  // Student management
+  const handleUpdateStudent = async (studentId, updates) => {
+    try {
+      await updateStudent(selectedSchool, studentId, updates, user);
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleDeleteStudent = async (studentId) => {
+    try {
+      await deleteStudent(selectedSchool, studentId);
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Photo management
+  const handlePhotoReplace = async (student, file) => {
+    try {
+      // Upload the new photo to the same location (it will overwrite)
+      const storagePath = `schools/${selectedSchool}/photos/${file.name}`;
+      const storageRef = ref(storage, storagePath);
+      const uploadResult = await uploadBytes(storageRef, file);
+      const newPhotoURL = await getDownloadURL(uploadResult.ref);
+
+      // Save the new photo to history
+      const historyRef = collection(
+        db,
+        "schools",
+        selectedSchool,
+        "students",
+        student.id,
+        "photoHistory"
+      );
+      await setDoc(doc(historyRef), {
+        url: newPhotoURL,
+        originalName: file.name,
+        uploadDate: new Date().toISOString(),
+        dateTaken: new Date().toISOString(),
+        note: "Manual photo replacement",
+        photoType: "replacement",
+      });
+
+      // Update the student record with the new image filename
+      await updateStudent(
+        selectedSchool,
+        student.id,
+        {
+          ...student,
+          Images: file.name,
+        },
+        user
+      );
+
+      // Reload photos
+      const updatedPhotos = await loadPhotos(selectedSchool);
+      setPhotos(updatedPhotos);
+
+      return true;
+    } catch (error) {
+      throw error;
     }
   };
 
   const loadPhotoVersions = async (studentId) => {
     try {
-      const { listAll } = await import("firebase/storage");
-      const versionsRef = ref(
-        storage,
-        `schools/${selectedSchool}/photos/versions/${studentId}`
+      // Load photo history from Firestore
+      const historyRef = collection(
+        db,
+        "schools",
+        selectedSchool,
+        "students",
+        studentId,
+        "photoHistory"
       );
-      const versionsList = await listAll(versionsRef);
+      const historySnapshot = await getDocs(
+        query(historyRef, orderBy("uploadDate", "asc"))
+      ); // Order by oldest first
 
-      const versions = await Promise.all(
-        versionsList.items.map(async (item) => {
-          const url = await getDownloadURL(item);
-          const fileName = item.name;
+      const versions = [];
 
-          // Extract timestamp and original filename
-          const parts = fileName.split("_");
-          if (parts.length < 2) {
-            // Fallback if filename format is unexpected
-            return {
-              name: fileName,
-              originalName: fileName,
-              url: url,
-              uploadDate: new Date(), // Use current date as fallback
-              fullPath: item.fullPath,
-            };
-          }
+      // Only return versions if there's more than one photo in history
+      if (historySnapshot.size > 1) {
+        historySnapshot.forEach((doc) => {
+          const data = doc.data();
+          versions.push({
+            id: doc.id,
+            url: data.url,
+            originalName: data.originalName,
+            uploadDate: new Date(data.uploadDate),
+            dateTaken: data.dateTaken ? new Date(data.dateTaken) : null,
+            note: data.note || "",
+            photoType: data.photoType,
+          });
+        });
+      }
 
-          const timestamp = parts[0];
-          const originalName = parts.slice(1).join("_");
-
-          // Convert timestamp back to proper ISO format for parsing
-          // timestamp format: 2025-01-15T10-30-00-000Z
-          // convert to: 2025-01-15T10:30:00.000Z
-          let isoTimestamp = timestamp;
-          try {
-            // Replace the hyphens in time portion with colons and dots
-            isoTimestamp = timestamp.replace(
-              /T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
-              "T$1:$2:$3.$4Z"
-            );
-
-            const uploadDate = new Date(isoTimestamp);
-
-            // Check if date is valid
-            if (isNaN(uploadDate.getTime())) {
-              throw new Error("Invalid date");
-            }
-
-            return {
-              name: fileName,
-              originalName: originalName,
-              url: url,
-              uploadDate: uploadDate,
-              fullPath: item.fullPath,
-            };
-          } catch (dateError) {
-            console.log(
-              "Date parsing failed for:",
-              timestamp,
-              "using fallback"
-            );
-            // Fallback to current date if parsing fails
-            return {
-              name: fileName,
-              originalName: originalName,
-              url: url,
-              uploadDate: new Date(), // Use current date as fallback
-              fullPath: item.fullPath,
-            };
-          }
-        })
-      );
-
-      // Sort by upload date (newest first)
-      return versions.sort((a, b) => b.uploadDate - a.uploadDate);
+      return versions;
     } catch (error) {
-      console.error("Error loading photo versions:", error);
-      return [];
-    }
-  };
-
-  const deletePhotoVersion = async (version) => {
-    try {
-      const { deleteObject } = await import("firebase/storage");
-      const versionRef = ref(storage, version.fullPath);
-      await deleteObject(versionRef);
-      console.log("Deleted version:", version.fullPath);
-    } catch (error) {
-      console.error("Error deleting photo version:", error);
-      throw new Error("Failed to delete photo version: " + error.message);
+      throw error;
     }
   };
 
   const restorePhotoVersion = async (student, version) => {
     try {
-      setUploadProgress("Restoring photo version...");
+      // Get the current photo info
+      const currentPhoto = photos.find((p) => p.name === student["Images"]);
 
-      // First archive the current photo (same as replace logic)
-      const currentPhoto = photos.find((photo) => {
-        const firstName = student["First Name"]?.toLowerCase() || "";
-        const lastName = student["Last Name"]?.toLowerCase() || "";
-        const photoName = photo.name.toLowerCase();
+      // The version.url points to the old photo we want to restore
+      // Since we can't "move" files, we'll update the student record to point to the old filename
 
-        if (student["Images"] && photo.name === student["Images"]) {
-          return true;
-        }
-
-        const expectedName = `${firstName}_${lastName}`;
-        if (photoName.includes(expectedName)) {
-          return true;
-        }
-
-        return photoName.includes(firstName) && photoName.includes(lastName);
-      });
-
+      // Save the current photo to history before restoring
       if (currentPhoto) {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const versionPath = `schools/${selectedSchool}/photos/versions/${student.id}/${timestamp}_${currentPhoto.name}`;
-
-        const currentPhotoRef = ref(
-          storage,
-          `schools/${selectedSchool}/photos/${currentPhoto.name}`
+        const historyRef = collection(
+          db,
+          "schools",
+          selectedSchool,
+          "students",
+          student.id,
+          "photoHistory"
         );
-        const currentPhotoBlob = await fetch(currentPhoto.url).then((r) =>
-          r.blob()
-        );
-
-        const versionRef = ref(storage, versionPath);
-        await uploadBytes(versionRef, currentPhotoBlob);
-
-        const { deleteObject } = await import("firebase/storage");
-        await deleteObject(currentPhotoRef);
+        await setDoc(doc(historyRef), {
+          url: currentPhoto.url,
+          originalName: student["Images"],
+          uploadDate: new Date().toISOString(),
+          dateTaken: new Date().toISOString(),
+          replacedBy: version.originalName,
+          replacedOn: new Date().toISOString(),
+          note: "Photo before restoration",
+        });
       }
 
-      // Download the version we want to restore
-      const versionBlob = await fetch(version.url).then((r) => r.blob());
+      // Update student record to use the restored photo filename
+      await updateStudent(
+        selectedSchool,
+        student.id,
+        {
+          ...student,
+          Images: version.originalName,
+        },
+        user
+      );
 
-      // Upload it as the current photo
-      const storagePath = `schools/${selectedSchool}/photos/${version.originalName}`;
-      const photoRef = ref(storage, storagePath);
-      await uploadBytes(photoRef, versionBlob);
+      // Reload photos
+      const updatedPhotos = await loadPhotos(selectedSchool);
+      setPhotos(updatedPhotos);
 
-      // Update student record
-      await updateStudent(selectedSchool, student.id, {
-        Images: version.originalName,
-      });
-
-      setUploadProgress(null);
-      await Promise.all([loadStudentsData(), loadPhotosData()]);
-
-      showExportResult({
-        type: "photo_restore",
-        success: true,
-        title: "Photo Version Restored",
-        message: `Successfully restored photo version: ${version.originalName}`,
-        details: [
-          `Restored: ${version.originalName}`,
-          `From: ${version.uploadDate.toLocaleString()}`,
-          "Current photo archived to version history",
-          "Changes are immediately visible",
-        ],
-      });
+      return true;
     } catch (error) {
-      setUploadProgress(null);
-      showExportResult({
-        type: "photo_restore",
-        success: false,
-        title: "Photo Restore Failed",
-        message: "There was an error restoring the photo version.",
-        details: [`Error: ${error.message}`],
-      });
+      throw error;
     }
+  };
+
+  const deletePhotoVersion = async (student, version) => {
+    try {
+      // Simply delete the history record from Firestore
+      // We don't delete the actual file from storage since it might be in use
+      const historyRef = doc(
+        db,
+        "schools",
+        selectedSchool,
+        "students",
+        student.id,
+        "photoHistory",
+        version.id
+      );
+      await deleteDoc(historyRef);
+
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Utility functions
+  const validateStudentIds = (students) => {
+    const idCounts = {};
+    const missingIds = [];
+    const duplicateIds = [];
+
+    students.forEach((student) => {
+      const id =
+        student["Student ID"] ||
+        student["Subject ID"] ||
+        student["SASID"] ||
+        student["Student Number"];
+
+      if (!id || id.toString().trim() === "") {
+        missingIds.push({
+          name: `${student["First Name"]} ${student["Last Name"]}`,
+          row: student.originalRowIndex || "Unknown",
+        });
+      } else {
+        const idStr = id.toString().trim();
+        idCounts[idStr] = (idCounts[idStr] || 0) + 1;
+      }
+    });
+
+    Object.entries(idCounts).forEach(([id, count]) => {
+      if (count > 1) {
+        const studentsWithId = students.filter((s) => {
+          const studentId =
+            s["Student ID"] ||
+            s["Subject ID"] ||
+            s["SASID"] ||
+            s["Student Number"];
+          return studentId && studentId.toString().trim() === id;
+        });
+
+        duplicateIds.push({
+          id: id,
+          count: count,
+          students: studentsWithId.map((s) => ({
+            name: `${s["First Name"]} ${s["Last Name"]}`,
+            row: s.originalRowIndex || "Unknown",
+          })),
+        });
+      }
+    });
+
+    return { missingIds, duplicateIds };
+  };
+
+  const closeExportResult = () => {
+    setExportResult(null);
   };
 
   const handleCreateSchool = async (schoolData) => {
@@ -756,7 +831,8 @@ const App = () => {
     if (
       !shouldShowContent &&
       activeView !== "notifications" &&
-      activeView !== "files"
+      activeView !== "files" &&
+      activeView !== "yearbook-proofing"
     ) {
       return <EmptyState userRole={userRole} />;
     }
@@ -794,7 +870,9 @@ const App = () => {
           <UploadView
             onCSVUpload={handleCSVUploadWrapper}
             onPhotoUpload={handlePhotoUploadWrapper}
+            onRetakesUpload={handleRetakesUpload}
             selectedSchool={selectedSchool}
+            userRole={userRole}
           />
         );
       case "schools":
@@ -810,6 +888,14 @@ const App = () => {
             userRole={userRole}
             user={user}
             schools={schools}
+          />
+        );
+      case "yearbook-proofing":
+        return (
+          <YearbookProofingView
+            selectedSchool={selectedSchool}
+            userRole={userRole}
+            user={user}
           />
         );
       default:
@@ -853,12 +939,17 @@ const App = () => {
     return <LoginForm onLogin={handleLogin} />;
   }
 
+  // Get selected school data for Sidebar
+  const selectedSchoolData = schools.find((s) => s.id === selectedSchool);
+
   return (
     <div className="app">
       <ProgressIndicator
         uploadProgress={uploadProgress}
         uploadStats={uploadStats}
-        onCancel={uploadProgress ? cancelExport : null}
+        onCancel={
+          uploadProgress ? () => (exportCancelledRef.current = true) : null
+        }
       />
 
       <PSPAInstructionModal
@@ -904,6 +995,8 @@ const App = () => {
           onViewChange={setActiveView}
           userRole={userRole}
           selectedSchool={selectedSchool}
+          selectedSchoolData={selectedSchoolData}
+          hasYearbookProofs={hasYearbookProofs}
           onExportCSV={handleExportCSV}
           onExportPSPA={handleExportPSPA}
           onExportTeacherEase={handleExportTeacherEase}

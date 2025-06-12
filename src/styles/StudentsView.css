@@ -594,6 +594,35 @@
   color: #dc2626;
 }
 
+/* Photo type badges */
+.photo-type-badge-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+}
+
+.photo-type-label {
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.photo-type-retake {
+  background-color: #ddd6fe;
+  color: #6b21a8;
+  border: 1px solid #a855f7;
+}
+
+.photo-type-makeup {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+}
+
 /* Student Info */
 .student-info {
   padding: 0.75rem;
@@ -604,6 +633,20 @@
   font-weight: 600;
   color: #1e293b;
   margin: 0 0 0.5rem 0;
+}
+
+.photo-type-indicator {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-left: 0.25rem;
+}
+
+.photo-type-indicator.photo-type-retake {
+  color: #9333ea;
+}
+
+.photo-type-indicator.photo-type-makeup {
+  color: #d97706;
 }
 
 .student-detail {
@@ -781,4 +824,14 @@
   gap: 1rem;
   justify-content: flex-end;
   margin-top: 2rem;
+}
+
+/* Modal button styles (for modals that don't have their own CSS) */
+.modal-button-danger {
+  background-color: #ef4444;
+  color: white;
+}
+
+.modal-button-danger:hover {
+  background-color: #dc2626;
 }

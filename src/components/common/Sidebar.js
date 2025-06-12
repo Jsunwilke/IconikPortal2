@@ -12,6 +12,7 @@ import {
   Grid3x3,
   Bell,
   FolderOpen,
+  BookOpen,
 } from "lucide-react";
 import "../../styles/Sidebar.css";
 
@@ -20,6 +21,8 @@ const Sidebar = ({
   onViewChange,
   userRole,
   selectedSchool,
+  selectedSchoolData,
+  hasYearbookProofs,
   onExportCSV,
   onExportPSPA,
   onExportTeacherEase,
@@ -41,9 +44,30 @@ const Sidebar = ({
       { id: "upload", label: "Upload Data", icon: Upload },
       { id: "schools", label: "Manage Schools", icon: School }
     );
+    navItems.push({
+      id: "yearbook-proofing",
+      label: "Yearbook Proofing",
+      icon: BookOpen,
+    });
     // Add notifications tab for studio users
     navItems.push({ id: "notifications", label: "Notifications", icon: Bell });
+  } else if (userRole === "school" && hasYearbookProofs) {
+    // Only show yearbook proofing for school users if proofs exist
+    navItems.push({
+      id: "yearbook-proofing",
+      label: "Yearbook Proofing",
+      icon: BookOpen,
+    });
   }
+
+  // Get export settings from the selected school
+  const exportSettings = selectedSchoolData?.exportSettings || {
+    csv: true,
+    pspa: false,
+    teacherease: false,
+    skyward: false,
+    fourup: false,
+  };
 
   const exportOptions = [
     {
@@ -51,27 +75,43 @@ const Sidebar = ({
       label: "Export CSV",
       icon: FileSpreadsheet,
       action: onExportCSV,
+      enabled: exportSettings.csv,
     },
-    { id: "pspa", label: "Export PSPA", icon: Download, action: onExportPSPA },
+    {
+      id: "pspa",
+      label: "Export PSPA",
+      icon: Download,
+      action: onExportPSPA,
+      enabled: exportSettings.pspa,
+    },
     {
       id: "teacherease",
       label: "Export TeacherEase",
       icon: Archive,
       action: onExportTeacherEase,
+      enabled: exportSettings.teacherease,
     },
     {
       id: "skyward",
       label: "Export Skyward",
       icon: GraduationCap,
       action: onExportSkyward,
+      enabled: exportSettings.skyward,
     },
     {
       id: "fourup",
       label: "Export 4-Up Labels",
       icon: Archive,
       action: onExportFourUp,
+      enabled: exportSettings.fourup,
     },
   ];
+
+  // Studio users see all exports, school users only see enabled exports
+  const enabledExportOptions =
+    userRole === "studio"
+      ? exportOptions
+      : exportOptions.filter((option) => option.enabled);
 
   const handleExportAction = (option) => {
     if (option.action) {
@@ -85,6 +125,7 @@ const Sidebar = ({
     if (userRole !== "studio") return false;
     if (itemId === "schools") return false; // Always allow schools management
     if (itemId === "notifications") return false; // Always allow notifications
+    if (itemId === "yearbook-proofing" && userRole === "studio") return false; // Studio users can always access yearbook proofing
     return !selectedSchool; // Disable other items if no school selected
   };
 
@@ -121,7 +162,7 @@ const Sidebar = ({
         })}
       </div>
 
-      {selectedSchool && (
+      {selectedSchool && enabledExportOptions.length > 0 && (
         <div className="nav-section">
           <div className="nav-section-title">Quick Actions</div>
 
@@ -137,7 +178,7 @@ const Sidebar = ({
 
             {exportMenuOpen && (
               <div className="export-menu">
-                {exportOptions.map((option) => {
+                {enabledExportOptions.map((option) => {
                   const Icon = option.icon;
                   return (
                     <div
