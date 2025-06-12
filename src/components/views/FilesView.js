@@ -1993,28 +1993,6 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
 
       {/* Toolbar */}
       <div className="files-toolbar-container">
-        {/* Test button outside of any conditions */}
-        <button
-          onClick={() => {
-            alert("Outside test button clicked!");
-            console.log(
-              "Outside test - selectedFileIds:",
-              selectedFileIds.size
-            );
-            console.log("Files selected:", Array.from(selectedFileIds));
-          }}
-          style={{
-            position: "absolute",
-            top: "5px",
-            right: "5px",
-            backgroundColor: "purple",
-            color: "white",
-            padding: "10px",
-            zIndex: 9999,
-          }}
-        >
-          OUTSIDE TEST
-        </button>
         {/* Main toolbar - always visible */}
         <div className="files-toolbar">
           {/* Navigation and basic actions */}
@@ -2116,11 +2094,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         </div>
 
         {/* Selection toolbar - always present but content changes */}
-        <div
-          className="files-toolbar-secondary"
-          style={{ border: "2px solid red" }}
-        >
-          <div>Debug: {selectedFileIds.size} files selected</div>
+        <div className="files-toolbar-secondary">
           {selectedFileIds.size > 0 ? (
             <>
               <div className="toolbar-section">
@@ -2145,17 +2119,6 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
 
               <div className="toolbar-section">
                 <button
-                  onClick={() => {
-                    alert("Test button clicked!");
-                    console.log("Test button clicked!");
-                  }}
-                  className="toolbar-button toolbar-button-small"
-                  style={{ backgroundColor: "green", color: "white" }}
-                >
-                  TEST
-                </button>
-
-                <button
                   onClick={handleBatchDownload}
                   className="toolbar-button toolbar-button-small"
                 >
@@ -2164,11 +2127,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
                 </button>
 
                 <button
-                  onClick={() => {
-                    alert(`About to delete ${selectedFileIds.size} files`);
-                    console.log("Delete clicked, calling handleBatchDelete");
-                    handleBatchDelete();
-                  }}
+                  onClick={handleBatchDelete}
                   className="toolbar-button toolbar-button-small"
                   style={{ color: "#dc2626" }}
                 >
@@ -2212,8 +2171,8 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         ))}
       </div>
 
-      {/* Parent Directory Drop Zone - Only show if not at root and dragging */}
-      {currentPath && isDraggingInternal && canMove() && (
+      {/* Parent Directory Drop Zone - Always show when not at root */}
+      {currentPath && canMove() && (
         <div
           ref={parentDropZoneRef}
           className={`parent-drop-zone ${dragOverParent ? "drag-over" : ""}`}
