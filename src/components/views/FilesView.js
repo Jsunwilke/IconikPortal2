@@ -1366,10 +1366,219 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     setDeleteConfirmation(confirmData);
   };
 
-  const handleBatchDownload = async () => {
-    const selectedFileObjects = getSelectedFileObjects();
+  // Undo functionality
+  const handleUndoAction = async (logEntry) => {
+    try {
+      console.log("Undoing action:", logEntry);
 
-    if (selectedFileObjects.length === 0) {
+      const cleanUser = {
+        uid: user.uid,
+        email: user.email,
+        role: userRole,
+      };
+
+      let undoSuccess = false;
+      let undoMessage = "";
+
+      switch (logEntry.action) {
+        case "move_file":
+        case "move_folder":
+          // Move back to original location
+          if (logEntry.sourcePath !== undefined) {
+            await moveFile(
+              selectedSchool,
+              logEntry.fileId,
+              logEntry.sourcePath,
+              cleanUser,
+              logEntry.action === "move_folder"
+            );
+            undoMessage = `Moved "${logEntry.fileName}" back to original location`;
+            undoSuccess = true;
+          }
+          break;
+
+        case "rename_file":
+        case "rename_folder":
+          // Restore original name
+          if (logEntry.metadata?.oldName) {
+            await renameFile(
+              selectedSchool,
+              logEntry.fileId,
+              logEntry.metadata.oldName,
+              cleanUser,
+              logEntry.action === "rename_folder"
+            );
+            undoMessage = `Renamed "${logEntry.fileName}" back to "${logEntry.metadata.oldName}"`;
+            undoSuccess = true;
+          }
+          break;
+
+        case "delete_file":
+        case "delete_folder":
+          // Restore from soft delete
+          try {
+            const { doc, updateDoc, serverTimestamp } = await import(
+              "firebase/firestore"
+            );
+            const { db } = await import("../../services/firebase");
+
+            const fileRef = doc(
+              db,
+              "schools",
+              selectedSchool,
+              "files",
+              logEntry.fileId
+            );
+            await updateDoc(fileRef, {
+              isDeleted: false,
+              restoredAt: serverTimestamp(),
+              restoredBy: cleanUser,
+            });
+
+            undoMessage = `Restored "${logEntry.fileName}" from deletion`;
+            undoSuccess = true;
+          } catch (error) {
+            console.error("Error restoring file:", error);
+            throw new Error("Could not restore file: " + error.message);
+          }
+          break;
+
+        case "create_folder":
+          // Delete the created folder
+          if (logEntry.fileId) {
+            await deleteFile(selectedSchool, logEntry.fileId, cleanUser, true);
+            undoMessage = `Removed created folder "${logEntry.fileName}"`;
+            undoSuccess = true;
+          }
+          break;
+
+        case "upload":
+          // Delete the uploaded file
+          if (logEntry.fileId) {
+            await deleteFile(selectedSchool, logEntry.fileId, cleanUser, false);
+            undoMessage = `Removed uploaded file "${logEntry.fileName}"`;
+            undoSuccess = true;
+          }
+          break;
+
+        default:
+          throw new Error(`Cannot undo action type: ${logEntry.action}`);
+      }
+
+      if (undoSuccess) {
+        // Refresh the file list
+        await loadFilesData();
+
+        // Refresh the audit log
+        await handleLoadAuditLog();
+
+        // Show success message
+        setUploadResult({
+          success: true,
+          title: "Action Undone",
+          message: undoMessage,
+          details: [
+            `Original action: ${logEntry.action
+              .replace(/_/g, " ")
+              .replace(/\b\w/g, (l) => l.toUpperCase())}`,
+            `Performed by: ${logEntry.user?.email || "Unknown"}`,
+            `Original time: ${new Date(
+              logEntry.timestamp?.seconds * 1000 || logEntry.timestamp
+            ).toLocaleString()}`,
+            `Undone by: ${user.email}`,
+          ],
+        });
+      }
+    } catch (error) {
+      console.error("Error undoing action:", error);
+      setUploadResult({
+        success: false,
+        title: "Undo Failed",
+        message: `Could not undo the ${logEntry.action.replace(
+          /_/g,
+          " "
+        )} action.`,
+        details: [
+          `Error: ${error.message}`,
+          `File: ${logEntry.fileName}`,
+          "The file may have been modified since this action",
+          "Please try the action manually or contact support",
+        ],
+      });
+    }
+  };
+
+  // Check if an action can be undone
+  const canUndoAction = (logEntry) => {
+    const undoableActions = [
+      "move_file",
+      "move_folder",
+      "rename_file",
+      "rename_folder",
+      "delete_file",
+      "delete_folder",
+      "create_folder",
+      "upload",
+    ];
+
+    return undoableActions.includes(logEntry.action);
+  };
+
+  // Enhanced download functionality with better fallbacks
+  const handleDownloadZip = async () => {
+    if (selectedFileIds.size === 0) {
+      setUploadResult({
+        success: false,
+        title: "No Files Selected",
+        message: "Please select files to download as ZIP.",
+        details: [
+          "Click on files to select them",
+          "Use Ctrl+Click to select multiple files",
+          "Selected files will be highlighted in blue",
+        ],
+      });
+      return;
+    }
+
+    try {
+      // Import JSZip dynamically if available, otherwise show placeholder
+      try {
+        // This would be the real implementation with JSZip
+        // const JSZip = await import('jszip');
+        // ... ZIP creation logic ...
+
+        // For now, show development message
+        setUploadResult({
+          success: false,
+          title: "ZIP Download Coming Soon",
+          message: "ZIP download functionality is being developed.",
+          details: [
+            `Selected files: ${selectedFileIds.size}`,
+            "This feature will create a ZIP file of all selected files",
+            "You'll be able to choose where to save the ZIP file",
+            "Use individual downloads for now by right-clicking files",
+          ],
+        });
+      } catch (importError) {
+        throw new Error("ZIP library not available");
+      }
+    } catch (error) {
+      console.error("Error creating ZIP:", error);
+      setUploadResult({
+        success: false,
+        title: "ZIP Download Failed",
+        message: "Could not create ZIP file.",
+        details: [
+          `Error: ${error.message}`,
+          "ZIP functionality requires additional libraries",
+          "Use individual file downloads for now",
+        ],
+      });
+    }
+  };
+
+  const handleDownloadToFolder = async () => {
+    if (selectedFileIds.size === 0) {
       setUploadResult({
         success: false,
         title: "No Files Selected",
@@ -1383,72 +1592,214 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       return;
     }
 
+    const selectedFileObjects = getSelectedFileObjects();
+
     try {
-      let successCount = 0;
-      let failCount = 0;
+      // Check if we're in a secure context and have the API
+      const hasFileSystemAccess =
+        "showDirectoryPicker" in window &&
+        window.isSecureContext &&
+        !window.location.href.includes("sandbox");
 
-      for (let i = 0; i < selectedFileObjects.length; i++) {
-        const file = selectedFileObjects[i];
-
+      if (hasFileSystemAccess) {
         try {
-          if (file.downloadURL && file.type === "file") {
-            const downloadLink = document.createElement("a");
-            downloadLink.href = file.downloadURL;
-            downloadLink.download = file.name;
-            downloadLink.target = "_blank";
-            downloadLink.style.display = "none";
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            document.body.removeChild(downloadLink);
-            successCount++;
+          // Let user pick a directory
+          const directoryHandle = await window.showDirectoryPicker();
 
-            if (i < selectedFileObjects.length - 1) {
-              await new Promise((resolve) => setTimeout(resolve, 500));
+          let successCount = 0;
+          let failCount = 0;
+          const failedFiles = [];
+
+          for (const file of selectedFileObjects) {
+            try {
+              if (file.downloadURL && file.type === "file") {
+                // Fetch the file
+                const response = await fetch(file.downloadURL);
+                if (!response.ok) {
+                  throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`
+                  );
+                }
+                const blob = await response.blob();
+
+                // Create file in the selected directory
+                const fileHandle = await directoryHandle.getFileHandle(
+                  file.name,
+                  { create: true }
+                );
+                const writable = await fileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+
+                successCount++;
+              } else if (file.type === "folder") {
+                console.log(`Skipping folder: ${file.name}`);
+                failCount++;
+                failedFiles.push({
+                  name: file.name,
+                  reason: "Folders cannot be downloaded",
+                });
+              } else {
+                console.error(`No download URL for file: ${file.name}`);
+                failCount++;
+                failedFiles.push({
+                  name: file.name,
+                  reason: "No download URL available",
+                });
+              }
+            } catch (fileError) {
+              console.error(`Error downloading ${file.name}:`, fileError);
+              failCount++;
+              failedFiles.push({ name: file.name, reason: fileError.message });
             }
-          } else if (file.type === "folder") {
-            console.log(`Skipping folder: ${file.name}`);
-            failCount++;
-          } else {
-            console.error(`No download URL for file: ${file.name}`);
-            failCount++;
           }
-        } catch (error) {
-          console.error(`Error downloading ${file.name}:`, error);
-          failCount++;
+
+          setUploadResult({
+            success: failCount === 0,
+            title:
+              failCount === 0
+                ? "Download Complete"
+                : "Download Completed with Issues",
+            message:
+              failCount === 0
+                ? `Successfully downloaded ${successCount} files.`
+                : `Downloaded ${successCount} files successfully, ${failCount} failed.`,
+            stats: {
+              totalCount: selectedFileObjects.length,
+              successCount: successCount,
+              failedCount: failCount,
+            },
+            details: [
+              `Total selected: ${selectedFileObjects.length}`,
+              `Files downloaded: ${successCount}`,
+              ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
+              `Downloaded to: ${directoryHandle.name}`,
+              ...failedFiles.slice(0, 5).map((f) => `• ${f.name}: ${f.reason}`),
+              ...(failedFiles.length > 5
+                ? [`• ... and ${failedFiles.length - 5} more`]
+                : []),
+            ],
+          });
+        } catch (fsError) {
+          if (fsError.name === "AbortError") {
+            // User cancelled the directory picker
+            console.log("User cancelled directory picker");
+            return;
+          }
+          throw fsError;
         }
+      } else {
+        // Fallback: Traditional individual downloads
+        console.log("Using fallback download method");
+
+        let successCount = 0;
+        let failCount = 0;
+        const failedFiles = [];
+
+        for (let i = 0; i < selectedFileObjects.length; i++) {
+          const file = selectedFileObjects[i];
+
+          try {
+            if (file.downloadURL && file.type === "file") {
+              // Create temporary download link
+              const downloadLink = document.createElement("a");
+              downloadLink.href = file.downloadURL;
+              downloadLink.download = file.name;
+              downloadLink.target = "_blank";
+              downloadLink.style.display = "none";
+
+              // Add to DOM, click, and remove
+              document.body.appendChild(downloadLink);
+              downloadLink.click();
+              document.body.removeChild(downloadLink);
+
+              successCount++;
+
+              // Add delay between downloads to avoid browser blocking
+              if (i < selectedFileObjects.length - 1) {
+                await new Promise((resolve) => setTimeout(resolve, 800));
+              }
+            } else if (file.type === "folder") {
+              console.log(`Skipping folder: ${file.name}`);
+              failCount++;
+              failedFiles.push({
+                name: file.name,
+                reason: "Folders cannot be downloaded",
+              });
+            } else {
+              console.error(`No download URL for file: ${file.name}`);
+              failCount++;
+              failedFiles.push({
+                name: file.name,
+                reason: "No download URL available",
+              });
+            }
+          } catch (error) {
+            console.error(`Error downloading ${file.name}:`, error);
+            failCount++;
+            failedFiles.push({ name: file.name, reason: error.message });
+          }
+        }
+
+        setUploadResult({
+          success: failCount === 0,
+          title:
+            failCount === 0
+              ? "Download Started"
+              : "Download Started with Issues",
+          message:
+            failCount === 0
+              ? `Successfully started download of ${successCount} files.`
+              : `Started download of ${successCount} files, ${failCount} failed.`,
+          stats: {
+            totalCount: selectedFileObjects.length,
+            successCount: successCount,
+            failedCount: failCount,
+          },
+          details: [
+            `Total selected: ${selectedFileObjects.length}`,
+            `Downloads started: ${successCount}`,
+            ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
+            "Files will appear in your browser's default downloads folder",
+            "Note: Your browser doesn't support direct folder selection",
+            "Consider using a modern browser like Chrome or Edge for better download experience",
+            ...failedFiles.slice(0, 3).map((f) => `• ${f.name}: ${f.reason}`),
+            ...(failedFiles.length > 3
+              ? [`• ... and ${failedFiles.length - 3} more`]
+              : []),
+          ],
+        });
+      }
+    } catch (error) {
+      console.error("Error downloading to folder:", error);
+
+      // Provide more specific error messages
+      let errorDetails = [`Error: ${error.message}`];
+
+      if (error.message.includes("showDirectoryPicker")) {
+        errorDetails = [
+          "Your browser doesn't support direct folder downloads",
+          "This feature requires a modern browser with File System Access API",
+          "Try using Chrome, Edge, or another Chromium-based browser",
+          "Alternative: Files will download to your default downloads folder instead",
+        ];
+      } else if (
+        error.message.includes("cross-origin") ||
+        error.message.includes("iframe")
+      ) {
+        errorDetails = [
+          "Download blocked due to security restrictions",
+          "This may be due to the app running in an embedded frame",
+          "Try opening the app in a new tab or window",
+          "Files will download individually to your downloads folder instead",
+        ];
       }
 
       setUploadResult({
-        success: failCount === 0,
-        title:
-          failCount === 0
-            ? "Batch Download Complete"
-            : "Batch Download Completed with Issues",
-        message:
-          failCount === 0
-            ? `Successfully started download of ${successCount} files.`
-            : `Started download of ${successCount} files, ${failCount} failed.`,
-        details: [
-          `Total selected: ${selectedFileObjects.length}`,
-          `Files downloaded: ${successCount}`,
-          ...(failCount > 0
-            ? [
-                `Skipped/Failed: ${failCount} (folders cannot be downloaded individually)`,
-              ]
-            : []),
-          "Check your browser's downloads folder",
-        ],
-      });
-    } catch (error) {
-      console.error("Error starting batch download:", error);
-      setUploadResult({
         success: false,
-        title: "Batch Download Failed",
-        message: "Could not start batch download.",
-        details: [
-          `Error: ${error.message}`,
-          "Please try downloading files individually",
-        ],
+        title: "Folder Download Failed",
+        message: "Could not download files to a specific folder.",
+        details: errorDetails,
       });
     }
   };
@@ -1529,13 +1880,35 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     try {
       console.log(`Loading version history for: ${file.name}`);
 
+      // Show loading state
+      setShowVersionHistory({
+        file: file,
+        versions: null,
+        loading: true,
+      });
+
       const versions = await getFileVersions(selectedSchool, file.id);
+
+      // Update with loaded versions
       setShowVersionHistory({
         file: file,
         versions: versions,
+        loading: false,
       });
+
+      console.log("Version history loaded:", versions);
     } catch (error) {
       console.error("Error loading version history:", error);
+
+      // Show error in the modal
+      setShowVersionHistory({
+        file: file,
+        versions: [],
+        loading: false,
+        error: error.message,
+      });
+
+      // Also show error popup
       setUploadResult({
         success: false,
         title: "Version History Failed",
@@ -1543,6 +1916,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         details: [
           `Error: ${error.message}`,
           "Version history may not be available for this file",
+          "This feature requires files to have been replaced or backed up",
         ],
       });
     }
@@ -1590,14 +1964,77 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     try {
       console.log(`Loading audit log for school: ${selectedSchool}`);
 
-      const auditFunction = httpsCallable(functions, "getFileAuditLog");
-      const result = await auditFunction({
-        schoolId: selectedSchool,
-        folder: currentFolder,
-        limit: 200,
-      });
+      // Try to use the cloud function first
+      try {
+        const auditFunction = httpsCallable(functions, "getFileAuditLog");
+        const result = await auditFunction({
+          schoolId: selectedSchool,
+          folder: currentFolder,
+          limit: 200,
+        });
 
-      setAuditLogData(result.data.logs || []);
+        setAuditLogData(result.data.logs || []);
+        console.log(
+          "✅ Audit log loaded via Cloud Function:",
+          result.data.logs?.length || 0,
+          "entries"
+        );
+      } catch (cloudFunctionError) {
+        console.log(
+          "Cloud function failed, trying direct Firestore query:",
+          cloudFunctionError
+        );
+
+        // Fallback: Direct Firestore query to school-level fileActions collection
+        const { collection, query, orderBy, limit, getDocs } = await import(
+          "firebase/firestore"
+        );
+        const { db } = await import("../../services/firebase");
+
+        // Query the school-level fileActions collection (matches your existing structure)
+        const actionsRef = collection(
+          db,
+          "schools",
+          selectedSchool,
+          "fileActions"
+        );
+        const actionsQuery = query(
+          actionsRef,
+          orderBy("timestamp", "desc"),
+          limit(200)
+        );
+
+        const snapshot = await getDocs(actionsQuery);
+        const logs = [];
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+
+          // Filter by folder if specified
+          if (!currentFolder || data.folder === currentFolder) {
+            logs.push({
+              id: doc.id,
+              action: data.action || "unknown",
+              fileName: data.fileName || "Unknown file",
+              folder: data.folder || "",
+              path: data.path || "",
+              sourcePath: data.sourcePath || "",
+              targetPath: data.targetPath || "",
+              user: data.user || { email: "Unknown user" },
+              timestamp: data.timestamp?.toDate() || new Date(),
+              metadata: data.metadata || {},
+            });
+          }
+        });
+
+        setAuditLogData(logs);
+        console.log(
+          "✅ Audit log loaded via Firestore fallback:",
+          logs.length,
+          "entries"
+        );
+      }
+
       setShowAuditLog(true);
       setAuditSearchTerm("");
       setAuditFilterAction("all");
@@ -1610,7 +2047,8 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         details: [
           `Error: ${error.message}`,
           `School: ${selectedSchool}`,
-          "Please try again or contact support",
+          "The audit log may be empty or not yet populated",
+          "File actions will appear here once users start managing files",
         ],
       });
     }
@@ -1824,6 +2262,489 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         </div>
       )}
 
+      {/* Audit Log Modal */}
+      {showAuditLog && (
+        <div className="modal-overlay" onClick={() => setShowAuditLog(false)}>
+          <div
+            className="modal-container"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "800px", maxHeight: "80vh" }}
+          >
+            <div className="modal-header">
+              <div className="modal-icon-container modal-info-icon">
+                <History style={{ width: "24px", height: "24px" }} />
+              </div>
+              <div>
+                <h2 className="modal-title">File System Audit Log</h2>
+              </div>
+            </div>
+
+            <div
+              className="modal-body"
+              style={{ maxHeight: "60vh", overflowY: "auto" }}
+            >
+              <div className="modal-content">
+                Activity log for{" "}
+                {currentFolder === "studio" ? "Studio" : "School"} files
+              </div>
+
+              {/* Search and Filter */}
+              <div
+                style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}
+              >
+                <input
+                  type="text"
+                  placeholder="Search actions, files, or users..."
+                  value={auditSearchTerm}
+                  onChange={(e) => setAuditSearchTerm(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "0.5rem",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.875rem",
+                  }}
+                />
+                <select
+                  value={auditFilterAction}
+                  onChange={(e) => setAuditFilterAction(e.target.value)}
+                  style={{
+                    padding: "0.5rem",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  <option value="all">All Actions</option>
+                  {getUniqueActions().map((action) => (
+                    <option key={action} value={action}>
+                      {action
+                        .replace(/_/g, " ")
+                        .replace(/\b\w/g, (l) => l.toUpperCase())}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {getFilteredAuditLog().length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "2rem",
+                    color: "#6b7280",
+                  }}
+                >
+                  <History
+                    style={{
+                      width: "48px",
+                      height: "48px",
+                      margin: "0 auto 1rem",
+                    }}
+                  />
+                  <p>No audit log entries found</p>
+                  <p style={{ fontSize: "0.875rem", margin: 0 }}>
+                    {auditSearchTerm || auditFilterAction !== "all"
+                      ? "Try adjusting your search or filter criteria"
+                      : "File actions will appear here once users start managing files"}
+                  </p>
+                </div>
+              ) : (
+                <div className="modal-details">
+                  <div className="modal-details-title">
+                    <Info style={{ width: "16px", height: "16px" }} />
+                    Recent Activity ({getFilteredAuditLog().length} entries)
+                  </div>
+                  <div style={{ maxHeight: "400px", overflowY: "auto" }}>
+                    {getFilteredAuditLog().map((log, index) => (
+                      <div
+                        key={log.id || index}
+                        style={{
+                          padding: "0.75rem",
+                          borderBottom:
+                            index < getFilteredAuditLog().length - 1
+                              ? "1px solid #f3f4f6"
+                              : "none",
+                          fontSize: "0.875rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            marginBottom: "0.25rem",
+                          }}
+                        >
+                          <div style={{ fontWeight: "600", color: "#1f2937" }}>
+                            {log.action
+                              ?.replace(/_/g, " ")
+                              .replace(/\b\w/g, (l) => l.toUpperCase()) ||
+                              "Unknown Action"}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                            }}
+                          >
+                            <div
+                              style={{ fontSize: "0.75rem", color: "#6b7280" }}
+                            >
+                              {log.timestamp instanceof Date
+                                ? log.timestamp.toLocaleString()
+                                : new Date(
+                                    log.timestamp?.seconds * 1000 || Date.now()
+                                  ).toLocaleString()}
+                            </div>
+                            {canUndoAction(log) && (
+                              <button
+                                onClick={() => handleUndoAction(log)}
+                                style={{
+                                  padding: "0.25rem 0.5rem",
+                                  fontSize: "0.75rem",
+                                  backgroundColor: "#fef3c7",
+                                  color: "#d97706",
+                                  border: "1px solid #f59e0b",
+                                  borderRadius: "0.25rem",
+                                  cursor: "pointer",
+                                  fontWeight: "500",
+                                  transition: "all 0.2s",
+                                }}
+                                onMouseOver={(e) => {
+                                  e.target.style.backgroundColor = "#fcd34d";
+                                }}
+                                onMouseOut={(e) => {
+                                  e.target.style.backgroundColor = "#fef3c7";
+                                }}
+                              >
+                                <RotateCcw
+                                  style={{
+                                    width: "12px",
+                                    height: "12px",
+                                    marginRight: "0.25rem",
+                                  }}
+                                />
+                                Undo
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div
+                          style={{ color: "#4b5563", marginBottom: "0.25rem" }}
+                        >
+                          <strong>File:</strong> {log.fileName || "Unknown"}
+                        </div>
+                        {log.path && (
+                          <div
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "0.8125rem",
+                              marginBottom: "0.25rem",
+                            }}
+                          >
+                            <strong>Path:</strong> {log.path}
+                          </div>
+                        )}
+                        {(log.sourcePath || log.targetPath) && (
+                          <div
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "0.8125rem",
+                              marginBottom: "0.25rem",
+                            }}
+                          >
+                            {log.sourcePath && log.targetPath ? (
+                              <>
+                                <strong>Moved:</strong> {log.sourcePath} →{" "}
+                                {log.targetPath}
+                              </>
+                            ) : log.sourcePath ? (
+                              <>
+                                <strong>From:</strong> {log.sourcePath}
+                              </>
+                            ) : (
+                              <>
+                                <strong>To:</strong> {log.targetPath}
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <div
+                          style={{ color: "#6b7280", fontSize: "0.8125rem" }}
+                        >
+                          <strong>User:</strong> {log.user?.email || "System"}
+                        </div>
+                        {log.metadata &&
+                          Object.keys(log.metadata).length > 0 && (
+                            <div
+                              style={{
+                                marginTop: "0.5rem",
+                                padding: "0.5rem",
+                                backgroundColor: "#f9fafb",
+                                borderRadius: "0.25rem",
+                                fontSize: "0.8125rem",
+                              }}
+                            >
+                              <strong>Details:</strong>
+                              <div
+                                style={{
+                                  marginTop: "0.25rem",
+                                  fontFamily: "monospace",
+                                }}
+                              >
+                                {Object.entries(log.metadata).map(
+                                  ([key, value]) => (
+                                    <div key={key}>
+                                      <span style={{ color: "#6b7280" }}>
+                                        {key}:
+                                      </span>{" "}
+                                      {JSON.stringify(value)}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                onClick={() => setShowAuditLog(false)}
+                className="modal-button modal-button-primary"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Version History Modal */}
+      {showVersionHistory && (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowVersionHistory(null)}
+        >
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-icon-container modal-info-icon">
+                <History style={{ width: "24px", height: "24px" }} />
+              </div>
+              <div>
+                <h2 className="modal-title">Version History</h2>
+              </div>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-content">
+                File: {showVersionHistory.file?.name}
+              </div>
+
+              {showVersionHistory.loading ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "2rem",
+                    color: "#6b7280",
+                  }}
+                >
+                  <RefreshCw
+                    style={{
+                      width: "32px",
+                      height: "32px",
+                      margin: "0 auto 1rem",
+                    }}
+                    className="loading-spinner"
+                  />
+                  <p>Loading version history...</p>
+                </div>
+              ) : showVersionHistory.error ? (
+                <div className="modal-details">
+                  <div className="modal-details-title">
+                    <AlertTriangle style={{ width: "16px", height: "16px" }} />
+                    Error Loading Versions
+                  </div>
+                  <div className="modal-details-list">
+                    <div className="modal-detail-item">
+                      {showVersionHistory.error}
+                    </div>
+                    <div className="modal-detail-item">
+                      This file may not have any previous versions yet.
+                    </div>
+                  </div>
+                </div>
+              ) : showVersionHistory.versions &&
+                showVersionHistory.versions.length > 0 ? (
+                <div className="modal-details">
+                  <div className="modal-details-title">
+                    <History style={{ width: "16px", height: "16px" }} />
+                    Previous Versions ({showVersionHistory.versions.length})
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      gap: "1rem",
+                      overflowX: "auto",
+                      padding: "1rem 0.5rem",
+                      minHeight: "200px",
+                    }}
+                  >
+                    {showVersionHistory.versions.map((version, index) => (
+                      <div
+                        key={version.id || index}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          padding: "0.75rem",
+                          backgroundColor: "#f8fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "0.5rem",
+                          textAlign: "center",
+                          minWidth: "150px",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {version.url && (
+                          <img
+                            src={version.url}
+                            alt={`Version ${index + 1}`}
+                            style={{
+                              width: "80px",
+                              height: "80px",
+                              objectFit: "cover",
+                              borderRadius: "0.375rem",
+                              border: "1px solid #e2e8f0",
+                              marginBottom: "0.5rem",
+                            }}
+                            onError={(e) => {
+                              // Hide broken images
+                              e.target.style.display = "none";
+                            }}
+                          />
+                        )}
+                        <div style={{ width: "100%" }}>
+                          <div
+                            style={{
+                              fontSize: "0.75rem",
+                              fontWeight: "600",
+                              color: "#1f2937",
+                              marginBottom: "0.25rem",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              maxWidth: "130px",
+                            }}
+                          >
+                            {version.originalName || version.name || "Unknown"}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "0.625rem",
+                              color: "#6b7280",
+                              marginBottom: "0.5rem",
+                              lineHeight: "1.3",
+                            }}
+                          >
+                            {version.uploadDate ? (
+                              <>
+                                {version.uploadDate instanceof Date
+                                  ? version.uploadDate.toLocaleDateString()
+                                  : new Date(
+                                      version.uploadDate
+                                    ).toLocaleDateString()}
+                                <br />
+                                <span style={{ fontSize: "0.6rem" }}>
+                                  {version.uploadDate instanceof Date
+                                    ? version.uploadDate.toLocaleTimeString(
+                                        [],
+                                        { hour: "2-digit", minute: "2-digit" }
+                                      )
+                                    : new Date(
+                                        version.uploadDate
+                                      ).toLocaleTimeString([], {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                </span>
+                              </>
+                            ) : (
+                              "Unknown date"
+                            )}
+                            <br />
+                            <span style={{ fontSize: "0.6rem" }}>
+                              {version.size || "Unknown size"}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "0.5rem",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <button
+                              onClick={() =>
+                                handleRestoreVersion(
+                                  showVersionHistory.file,
+                                  version
+                                )
+                              }
+                              className="modal-button modal-button-primary"
+                              style={{
+                                padding: "0.5rem 0.75rem",
+                                fontSize: "0.75rem",
+                              }}
+                            >
+                              <RotateCcw
+                                style={{ width: "14px", height: "14px" }}
+                              />
+                              Restore
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-details">
+                  <div className="modal-details-title">
+                    <History style={{ width: "16px", height: "16px" }} />
+                    No Previous Versions
+                  </div>
+                  <div className="modal-details-list">
+                    <div className="modal-detail-item">
+                      This file has no version history yet.
+                    </div>
+                    <div className="modal-detail-item">
+                      Previous versions are created when files are replaced or
+                      before deletion.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                onClick={() => setShowVersionHistory(null)}
+                className="modal-button modal-button-primary"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upload Result Modal */}
       {uploadResult && (
         <div className="modal-overlay" onClick={() => setUploadResult(null)}>
@@ -1946,20 +2867,20 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         </div>
         <div className="files-actions">
           <button
-            onClick={() => alert("ZIP download coming soon")}
+            onClick={handleDownloadZip}
             className="button button-secondary"
-            disabled={filteredFiles.length === 0}
+            disabled={selectedFileIds.size === 0}
           >
             <Archive style={{ width: "16px", height: "16px" }} />
-            Download ZIP
+            Download ZIP ({selectedFileIds.size})
           </button>
           <button
-            onClick={() => alert("Direct download coming soon")}
+            onClick={handleDownloadToFolder}
             className="button button-primary"
-            disabled={filteredFiles.length === 0}
+            disabled={selectedFileIds.size === 0}
           >
             <Download style={{ width: "16px", height: "16px" }} />
-            Download to Folder
+            Download to Folder ({selectedFileIds.size})
           </button>
         </div>
       </div>
@@ -2119,11 +3040,19 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
 
               <div className="toolbar-section">
                 <button
-                  onClick={handleBatchDownload}
+                  onClick={handleDownloadToFolder}
                   className="toolbar-button toolbar-button-small"
                 >
                   <Download style={{ width: "16px", height: "16px" }} />
-                  Download Selected
+                  Download to Folder
+                </button>
+
+                <button
+                  onClick={handleDownloadZip}
+                  className="toolbar-button toolbar-button-small"
+                >
+                  <Archive style={{ width: "16px", height: "16px" }} />
+                  Download ZIP
                 </button>
 
                 <button
