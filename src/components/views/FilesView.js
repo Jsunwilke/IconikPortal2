@@ -905,8 +905,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     }
   }, [selectedSchool, currentPath, currentFolder, loadFilesData]);
 
-  // TEMPORARILY DISABLED - Click away handler
-  /*
+  // Click away handler for context menu
   useEffect(() => {
     const handleClickAway = (event) => {
       if (
@@ -917,10 +916,11 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       }
     };
 
-    document.addEventListener("click", handleClickAway);
-    return () => document.removeEventListener("click", handleClickAway);
-  }, []);
-  */
+    if (contextMenu) {
+      document.addEventListener("click", handleClickAway);
+      return () => document.removeEventListener("click", handleClickAway);
+    }
+  }, [contextMenu]);
 
   useEffect(() => {
     const dropZone = dropZoneRef.current;
@@ -1885,25 +1885,81 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     }
   };
 
+  // Check if a file can be previewed
+  const canPreviewFile = (file) => {
+    if (!file.contentType) return false;
+
+    const previewableTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/svg+xml",
+      "text/plain",
+      "text/html",
+      "text/css",
+      "text/javascript",
+      "application/json",
+      "application/pdf",
+    ];
+
+    return previewableTypes.includes(file.contentType.toLowerCase());
+  };
+
   const handlePreviewFile = async (file) => {
+    if (!canPreviewFile(file)) {
+      setUploadResult({
+        success: false,
+        title: "Preview Not Available",
+        message: `Cannot preview ${file.name}.`,
+        details: [
+          `File type: ${file.contentType || "unknown"}`,
+          "Preview is only available for images, text files, and PDFs",
+          "Supported formats: JPG, PNG, GIF, WebP, SVG, TXT, HTML, CSS, JS, JSON, PDF",
+          "Use the download option to view the file in its default application",
+        ],
+      });
+      return;
+    }
+
     try {
-      if (file.contentType && file.contentType.startsWith("image/")) {
+      console.log("Previewing file:", file.name, "Type:", file.contentType);
+
+      if (file.contentType.startsWith("image/")) {
+        // Image preview
         setShowFilePreview({
           file: file,
           content: file.downloadURL,
           type: "image",
         });
+      } else if (file.contentType === "application/pdf") {
+        // PDF preview - open in new tab
+        window.open(file.downloadURL, "_blank");
+        return;
+      } else if (
+        file.contentType.startsWith("text/") ||
+        file.contentType === "application/json"
+      ) {
+        // Text file preview
+        try {
+          const response = await fetch(file.downloadURL);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          const textContent = await response.text();
+
+          setShowFilePreview({
+            file: file,
+            content: textContent,
+            type: "text",
+          });
+        } catch (fetchError) {
+          throw new Error(`Could not load file content: ${fetchError.message}`);
+        }
       } else {
-        setShowFileDetails({
-          file: file,
-          details: {
-            name: file.name,
-            size: file.size,
-            modifiedTime: file.modifiedDate,
-            contentType: file.contentType,
-            downloadURL: file.downloadURL,
-          },
-        });
+        // Fallback - try to open in new tab
+        window.open(file.downloadURL, "_blank");
       }
     } catch (error) {
       console.error("Error previewing file:", error);
@@ -1913,7 +1969,8 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         message: `Could not preview "${file.name}".`,
         details: [
           `Error: ${error.message}`,
-          "File may be too large or not supported for preview",
+          "The file may be corrupted or not accessible",
+          "Try downloading the file instead",
         ],
       });
     }
@@ -2005,7 +2062,9 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
   const handleLoadAuditLog = async () => {
     setLoadingAudit(true);
     try {
-      console.log(`Loading audit log for school: ${selectedSchool}`);
+      console.log(
+        `Loading audit log for school: ${selectedSchool}, folder: ${currentFolder}`
+      );
 
       // Try to use the cloud function first
       try {
@@ -2016,12 +2075,13 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
           limit: 200,
         });
 
-        setAuditLogData(result.data.logs || []);
         console.log(
           "✅ Audit log loaded via Cloud Function:",
           result.data.logs?.length || 0,
           "entries"
         );
+        console.log("Sample entries:", result.data.logs?.slice(0, 3));
+        setAuditLogData(result.data.logs || []);
       } catch (cloudFunctionError) {
         console.log(
           "Cloud function failed, trying direct Firestore query:",
@@ -2053,29 +2113,32 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         snapshot.forEach((doc) => {
           const data = doc.data();
 
-          // Filter by folder if specified
-          if (!currentFolder || data.folder === currentFolder) {
-            logs.push({
-              id: doc.id,
-              action: data.action || "unknown",
-              fileName: data.fileName || "Unknown file",
-              folder: data.folder || "",
-              path: data.path || "",
-              sourcePath: data.sourcePath || "",
-              targetPath: data.targetPath || "",
-              user: data.user || { email: "Unknown user" },
-              timestamp: data.timestamp?.toDate() || new Date(),
-              metadata: data.metadata || {},
-            });
-          }
+          // Don't filter by folder here - show all actions
+          // The Cloud Function handles folder filtering, but for fallback let's see everything
+          logs.push({
+            id: doc.id,
+            action: data.action || "unknown",
+            fileName: data.fileName || "Unknown file",
+            folder: data.folder || "",
+            path: data.path || "",
+            sourcePath: data.sourcePath || "",
+            targetPath: data.targetPath || "",
+            user: data.user || { email: "Unknown user" },
+            timestamp: data.timestamp?.toDate() || new Date(),
+            metadata: data.metadata || {},
+          });
         });
 
-        setAuditLogData(logs);
         console.log(
           "✅ Audit log loaded via Firestore fallback:",
           logs.length,
           "entries"
         );
+        console.log("Sample entries:", logs.slice(0, 3));
+        console.log("Action types found:", [
+          ...new Set(logs.map((l) => l.action)),
+        ]);
+        setAuditLogData(logs);
       }
 
       setShowAuditLog(true);
@@ -2101,6 +2164,12 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
   const getFilteredAuditLog = () => {
     let filtered = auditLogData;
 
+    console.log("🔍 Original audit log data:", {
+      totalEntries: filtered.length,
+      sampleActions: filtered.slice(0, 5).map((log) => log.action),
+      allActions: [...new Set(filtered.map((log) => log.action))],
+    });
+
     if (auditSearchTerm.trim()) {
       const search = auditSearchTerm.toLowerCase().trim();
       filtered = filtered.filter((log) => {
@@ -2119,8 +2188,19 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     }
 
     if (auditFilterAction !== "all") {
+      const beforeFilter = filtered.length;
       filtered = filtered.filter((log) => log.action === auditFilterAction);
+      console.log(
+        `🔍 Filter applied: ${auditFilterAction}, ${beforeFilter} → ${filtered.length} entries`
+      );
     }
+
+    console.log("🔍 Final filtered audit log:", {
+      finalCount: filtered.length,
+      searchTerm: auditSearchTerm,
+      filterAction: auditFilterAction,
+      resultActions: [...new Set(filtered.map((log) => log.action))],
+    });
 
     return filtered;
   };
@@ -2132,6 +2212,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
         actions.add(log.action);
       }
     });
+    console.log("🔍 All unique actions in audit log:", Array.from(actions));
     return Array.from(actions).sort();
   };
 
@@ -2209,7 +2290,11 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       {showPermissionModal && (
         <div
           className="modal-overlay"
-          onClick={() => setShowPermissionModal(false)}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowPermissionModal(false);
+            }
+          }}
         >
           <div className="modal-container" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -2694,6 +2779,174 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
             <div className="modal-footer">
               <button
                 onClick={() => setShowAuditLog(false)}
+                className="modal-button modal-button-primary"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Preview Modal */}
+      {showFilePreview && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowFilePreview(null);
+            }
+          }}
+        >
+          <div
+            className="modal-container"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth:
+                showFilePreview.type === "image" ? "fit-content" : "800px",
+              maxHeight:
+                showFilePreview.type === "image" ? "fit-content" : "80vh",
+              width: showFilePreview.type === "text" ? "800px" : "auto",
+            }}
+          >
+            <div className="modal-header">
+              <div className="modal-icon-container modal-info-icon">
+                <Eye style={{ width: "24px", height: "24px" }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2
+                  className="modal-title"
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {showFilePreview.file?.name}
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowFilePreview(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: "1.5rem",
+                  cursor: "pointer",
+                  color: "#6b7280",
+                  padding: "0.25rem",
+                  marginLeft: "1rem",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              className="modal-body"
+              style={{
+                padding: showFilePreview.type === "image" ? "1rem" : "1.5rem",
+                maxHeight: showFilePreview.type === "text" ? "60vh" : "none",
+                overflowY: showFilePreview.type === "text" ? "auto" : "visible",
+              }}
+            >
+              {showFilePreview.type === "image" ? (
+                <div style={{ textAlign: "center" }}>
+                  <img
+                    src={showFilePreview.content}
+                    alt={showFilePreview.file?.name}
+                    style={{
+                      maxWidth: "80vw",
+                      maxHeight: "70vh",
+                      height: "auto",
+                      width: "auto",
+                      objectFit: "contain",
+                      borderRadius: "0.375rem",
+                      border: "1px solid #e5e7eb",
+                      boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
+                    }}
+                  />
+                  <div
+                    style={{
+                      marginTop: "0.75rem",
+                      fontSize: "0.8125rem",
+                      color: "#6b7280",
+                      textAlign: "center",
+                    }}
+                  >
+                    {showFilePreview.file?.contentType} •{" "}
+                    {showFilePreview.file?.size}
+                  </div>
+                </div>
+              ) : showFilePreview.type === "text" ? (
+                <div>
+                  <div
+                    style={{
+                      marginBottom: "1rem",
+                      fontSize: "0.8125rem",
+                      color: "#6b7280",
+                      padding: "0.5rem 0.75rem",
+                      backgroundColor: "#f9fafb",
+                      borderRadius: "0.375rem",
+                      border: "1px solid #e5e7eb",
+                    }}
+                  >
+                    {showFilePreview.file?.contentType} •{" "}
+                    {showFilePreview.file?.size}
+                  </div>
+                  <pre
+                    style={{
+                      backgroundColor: "#f8fafc",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "0.375rem",
+                      padding: "1rem",
+                      fontSize: "0.8125rem",
+                      lineHeight: "1.4",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      maxHeight: "50vh",
+                      overflowY: "auto",
+                      margin: 0,
+                    }}
+                  >
+                    {showFilePreview.content}
+                  </pre>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "2rem",
+                    color: "#6b7280",
+                  }}
+                >
+                  <FileText
+                    style={{
+                      width: "48px",
+                      height: "48px",
+                      margin: "0 auto 1rem",
+                    }}
+                  />
+                  <p>Preview not available for this file type.</p>
+                  <p style={{ fontSize: "0.875rem", margin: 0 }}>
+                    {showFilePreview.file?.contentType} •{" "}
+                    {showFilePreview.file?.size}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                onClick={() => handleDownloadFile(showFilePreview.file)}
+                className="modal-button modal-button-secondary"
+              >
+                <Download style={{ width: "16px", height: "16px" }} />
+                Download
+              </button>
+              <button
+                onClick={() => setShowFilePreview(null)}
                 className="modal-button modal-button-primary"
               >
                 Close
@@ -3660,16 +3913,18 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button
-            className="context-menu-item"
-            onClick={() => {
-              handlePreviewFile(contextMenu.file);
-              setContextMenu(null);
-            }}
-          >
-            <Eye style={{ width: "16px", height: "16px" }} />
-            Preview
-          </button>
+          {canPreviewFile(contextMenu.file) && (
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                handlePreviewFile(contextMenu.file);
+                setContextMenu(null);
+              }}
+            >
+              <Eye style={{ width: "16px", height: "16px" }} />
+              Preview
+            </button>
+          )}
           <button
             className="context-menu-item"
             onClick={() => {

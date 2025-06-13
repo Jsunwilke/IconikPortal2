@@ -40,9 +40,28 @@ const createFileDocument = (fileData) => ({
   isDeleted: false,
 });
 
-// Action logging for audit trail
-const logFileAction = async (schoolId, actionData) => {
+// Enhanced action logging for audit trail
+const logFileAction = async (schoolId, actionData, skipLogging = false) => {
   try {
+    // Skip logging if this is a nested operation (like version creation during delete)
+    if (skipLogging) {
+      console.log(
+        "⏭️ Skipping nested logging for:",
+        actionData.action,
+        actionData.fileName
+      );
+      return { success: true, skipped: true };
+    }
+
+    console.log("🔍 Attempting to log file action:", {
+      action: actionData.action,
+      fileName: actionData.fileName,
+      schoolId: schoolId,
+      folder: actionData.folder,
+      path: actionData.path,
+      user: actionData.user?.email,
+    });
+
     const actionDoc = {
       action: actionData.action,
       fileName: actionData.fileName,
@@ -62,11 +81,28 @@ const logFileAction = async (schoolId, actionData) => {
       timestamp: serverTimestamp(),
     };
 
-    await addDoc(collection(db, "schools", schoolId, "fileActions"), actionDoc);
-    console.log("File action logged:", actionData.action, actionData.fileName);
+    console.log("📝 Action document to be saved:", actionDoc);
+
+    const docRef = await addDoc(
+      collection(db, "schools", schoolId, "fileActions"),
+      actionDoc
+    );
+
+    console.log("✅ File action logged successfully:", {
+      id: docRef.id,
+      action: actionData.action,
+      fileName: actionData.fileName,
+      user: actionData.user?.email,
+    });
+
+    return { success: true, actionId: docRef.id };
   } catch (error) {
-    console.error("Error logging file action:", error);
-    // Don't throw - logging failure shouldn't break main operation
+    console.error("❌ Error logging file action:", error);
+    console.error("Failed action data:", actionData);
+
+    // Still don't throw - logging failure shouldn't break main operation
+    // But now we have better visibility into what's failing
+    return { success: false, error: error.message };
   }
 };
 
@@ -147,7 +183,9 @@ export const uploadFile = async (
   onProgress = null
 ) => {
   try {
-    console.log(`Uploading file: ${file.name} to ${path}`);
+    console.log(
+      `🚀 Starting upload: ${file.name} to ${schoolId}/${folder}/${path}`
+    );
 
     // Generate unique storage ID
     const storageId = generateStorageId();
@@ -190,8 +228,10 @@ export const uploadFile = async (
       fileDoc
     );
 
-    // Log the upload action
-    await logFileAction(schoolId, {
+    console.log(`📁 File document created with ID: ${docRef.id}`);
+
+    // Enhanced logging for upload action
+    const logResult = await logFileAction(schoolId, {
       action: "upload",
       fileName: file.name,
       fileId: docRef.id,
@@ -205,7 +245,11 @@ export const uploadFile = async (
       },
     });
 
-    console.log(`Successfully uploaded ${file.name} with ID ${docRef.id}`);
+    console.log(`✅ Upload complete for ${file.name}:`, {
+      fileId: docRef.id,
+      downloadURL: downloadURL,
+      logResult: logResult,
+    });
 
     return {
       success: true,
@@ -214,7 +258,7 @@ export const uploadFile = async (
       fileId: docRef.id,
     };
   } catch (error) {
-    console.error("Error uploading file:", error);
+    console.error("❌ Error uploading file:", error);
     throw new Error("Error uploading file: " + error.message);
   }
 };
@@ -229,6 +273,10 @@ export const uploadFiles = async (
   onProgress = null,
   shouldCancel = null
 ) => {
+  console.log(
+    `📤 Starting batch upload: ${files.length} files to ${schoolId}/${folder}/${path}`
+  );
+
   const results = [];
   let completed = 0;
 
@@ -277,6 +325,7 @@ export const uploadFiles = async (
         });
       }
     } catch (error) {
+      console.error(`❌ Failed to upload ${file.name}:`, error);
       results.push({
         success: false,
         fileName: file.name,
@@ -297,6 +346,11 @@ export const uploadFiles = async (
     }
   }
 
+  console.log(
+    `📤 Batch upload complete: ${results.filter((r) => r.success).length}/${
+      files.length
+    } succeeded`
+  );
   return results;
 };
 
@@ -309,7 +363,9 @@ export const createFolder = async (
   user
 ) => {
   try {
-    console.log(`Creating virtual folder: ${folderName} at ${path}`);
+    console.log(
+      `📁 Creating folder: ${folderName} at ${schoolId}/${folder}/${path}`
+    );
 
     // Create folder document in Firestore
     const folderDoc = createFileDocument({
@@ -332,8 +388,10 @@ export const createFolder = async (
       folderDoc
     );
 
-    // Log the folder creation
-    await logFileAction(schoolId, {
+    console.log(`📁 Folder document created with ID: ${docRef.id}`);
+
+    // Enhanced logging for folder creation
+    const logResult = await logFileAction(schoolId, {
       action: "create_folder",
       fileName: folderName,
       fileId: docRef.id,
@@ -342,12 +400,15 @@ export const createFolder = async (
       user: user,
     });
 
-    console.log(
-      `Successfully created folder ${folderName} with ID ${docRef.id}`
-    );
+    console.log(`✅ Folder creation complete:`, {
+      folderId: docRef.id,
+      folderName: folderName,
+      logResult: logResult,
+    });
+
     return { success: true, folderId: docRef.id };
   } catch (error) {
-    console.error("Error creating folder:", error);
+    console.error("❌ Error creating folder:", error);
     throw new Error("Error creating folder: " + error.message);
   }
 };
@@ -362,7 +423,7 @@ export const renameFile = async (
 ) => {
   try {
     console.log(
-      `Renaming ${isFolder ? "folder" : "file"} ${fileId} to ${newName}`
+      `✏️ Renaming ${isFolder ? "folder" : "file"} ${fileId} to ${newName}`
     );
 
     const fileRef = doc(db, "schools", schoolId, "files", fileId);
@@ -374,6 +435,8 @@ export const renameFile = async (
 
     const fileData = fileDoc.data();
     const oldName = fileData.name;
+
+    console.log(`✏️ Renaming "${oldName}" to "${newName}"`);
 
     // Update file document
     await updateDoc(fileRef, {
@@ -392,8 +455,8 @@ export const renameFile = async (
       );
     }
 
-    // Log the rename action
-    await logFileAction(schoolId, {
+    // Enhanced logging for rename action
+    const logResult = await logFileAction(schoolId, {
       action: isFolder ? "rename_folder" : "rename_file",
       fileName: oldName,
       fileId: fileId,
@@ -406,10 +469,16 @@ export const renameFile = async (
       },
     });
 
-    console.log(`Successfully renamed ${oldName} to ${newName}`);
+    console.log(`✅ Rename complete:`, {
+      fileId: fileId,
+      oldName: oldName,
+      newName: newName,
+      logResult: logResult,
+    });
+
     return { success: true };
   } catch (error) {
-    console.error("Error renaming file:", error);
+    console.error("❌ Error renaming file:", error);
     throw new Error("Error renaming file: " + error.message);
   }
 };
@@ -430,6 +499,10 @@ const updateChildrenPaths = async (
       ? `${parentPath}/${newFolderName}`
       : newFolderName;
 
+    console.log(
+      `🔄 Updating children paths from "${oldFullPath}" to "${newFullPath}"`
+    );
+
     // Find all files that have paths starting with the old folder path
     const filesRef = collection(db, "schools", schoolId, "files");
     const q = query(
@@ -440,6 +513,7 @@ const updateChildrenPaths = async (
 
     const snapshot = await getDocs(q);
     const batch = writeBatch(db);
+    let updatedCount = 0;
 
     snapshot.forEach((doc) => {
       const data = doc.data();
@@ -455,13 +529,16 @@ const updateChildrenPaths = async (
           path: newPath,
           updatedAt: serverTimestamp(),
         });
+        updatedCount++;
       }
     });
 
     await batch.commit();
-    console.log(`Updated children paths from ${oldFullPath} to ${newFullPath}`);
+    console.log(
+      `✅ Updated ${updatedCount} children paths from ${oldFullPath} to ${newFullPath}`
+    );
   } catch (error) {
-    console.error("Error updating children paths:", error);
+    console.error("❌ Error updating children paths:", error);
     throw error;
   }
 };
@@ -469,7 +546,7 @@ const updateChildrenPaths = async (
 // Delete a file or folder
 export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
   try {
-    console.log(`Deleting ${isFolder ? "folder" : "file"} ${fileId}`);
+    console.log(`🗑️  Deleting ${isFolder ? "folder" : "file"} ${fileId}`);
 
     const fileRef = doc(db, "schools", schoolId, "files", fileId);
     const fileDoc = await getDoc(fileRef);
@@ -479,6 +556,7 @@ export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
     }
 
     const fileData = fileDoc.data();
+    console.log(`🗑️  Deleting "${fileData.name}" (${fileData.type})`);
 
     if (isFolder) {
       // Delete all children recursively
@@ -490,9 +568,9 @@ export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
         user
       );
     } else {
-      // Create version before deleting file
+      // Create version before deleting file (skip audit logging for this nested operation)
       if (fileData.storageId) {
-        await createFileVersion(schoolId, fileData, user);
+        await createFileVersion(schoolId, fileData, user, true); // Skip audit log
       }
 
       // Delete from storage if it has a storage file
@@ -507,6 +585,7 @@ export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
             `schools/${schoolId}/files/${storageFileName}`
           );
           await deleteObject(storageRef);
+          console.log(`🗑️  Deleted from storage: ${storageFileName}`);
         } catch (storageError) {
           console.warn("Could not delete from storage:", storageError);
           // Continue with database deletion even if storage delete fails
@@ -527,8 +606,8 @@ export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
         : null,
     });
 
-    // Log the delete action
-    await logFileAction(schoolId, {
+    // Enhanced logging for delete action
+    const logResult = await logFileAction(schoolId, {
       action: isFolder ? "delete_folder" : "delete_file",
       fileName: fileData.name,
       fileId: fileId,
@@ -541,10 +620,16 @@ export const deleteFile = async (schoolId, fileId, user, isFolder = false) => {
       },
     });
 
-    console.log(`Successfully deleted ${fileData.name}`);
+    console.log(`✅ Delete complete:`, {
+      fileName: fileData.name,
+      fileId: fileId,
+      type: fileData.type,
+      logResult: logResult,
+    });
+
     return { success: true };
   } catch (error) {
-    console.error("Error deleting file:", error);
+    console.error("❌ Error deleting file:", error);
     throw new Error("Error deleting file: " + error.message);
   }
 };
@@ -559,6 +644,7 @@ const deleteChildrenRecursively = async (
 ) => {
   try {
     const targetPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+    console.log(`🗑️  Recursively deleting children of: ${targetPath}`);
 
     // Find all children of this folder
     const filesRef = collection(db, "schools", schoolId, "files");
@@ -570,6 +656,7 @@ const deleteChildrenRecursively = async (
 
     const snapshot = await getDocs(q);
     const batch = writeBatch(db);
+    let deletedCount = 0;
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
@@ -580,9 +667,9 @@ const deleteChildrenRecursively = async (
         currentPath === targetPath ||
         currentPath.startsWith(targetPath + "/")
       ) {
-        // Create version for files before deleting
+        // Create version for files before deleting (skip audit logging for nested operation)
         if (data.type === "file" && data.storageId) {
-          await createFileVersion(schoolId, data, user);
+          await createFileVersion(schoolId, data, user, true); // Skip audit log
         }
 
         // Delete from storage if it's a file
@@ -618,7 +705,7 @@ const deleteChildrenRecursively = async (
             : null,
         });
 
-        // Log individual deletion
+        // Enhanced logging for individual deletion
         await logFileAction(schoolId, {
           action: data.type === "folder" ? "delete_folder" : "delete_file",
           fileName: data.name,
@@ -631,13 +718,17 @@ const deleteChildrenRecursively = async (
             storageId: data.storageId,
           },
         });
+
+        deletedCount++;
       }
     }
 
     await batch.commit();
-    console.log(`Recursively deleted children of folder: ${targetPath}`);
+    console.log(
+      `✅ Recursively deleted ${deletedCount} children of folder: ${targetPath}`
+    );
   } catch (error) {
-    console.error("Error deleting folder children:", error);
+    console.error("❌ Error deleting folder children:", error);
     throw error;
   }
 };
@@ -652,7 +743,7 @@ export const moveFile = async (
 ) => {
   try {
     console.log(
-      `Moving ${isFolder ? "folder" : "file"} ${fileId} to ${targetPath}`
+      `🚚 Moving ${isFolder ? "folder" : "file"} ${fileId} to ${targetPath}`
     );
 
     const fileRef = doc(db, "schools", schoolId, "files", fileId);
@@ -665,6 +756,10 @@ export const moveFile = async (
     const fileData = fileDoc.data();
     const oldPath = fileData.path;
     const oldFullPath = oldPath ? `${oldPath}/${fileData.name}` : fileData.name;
+
+    console.log(
+      `🚚 Moving "${fileData.name}" from "${oldPath}" to "${targetPath}"`
+    );
 
     // Update the file's path
     await updateDoc(fileRef, {
@@ -685,8 +780,8 @@ export const moveFile = async (
       );
     }
 
-    // Log the move action
-    await logFileAction(schoolId, {
+    // Enhanced logging for move action
+    const logResult = await logFileAction(schoolId, {
       action: isFolder ? "move_folder" : "move_file",
       fileName: fileData.name,
       fileId: fileId,
@@ -697,12 +792,17 @@ export const moveFile = async (
       user: user,
     });
 
-    console.log(
-      `Successfully moved ${fileData.name} from ${oldPath} to ${targetPath}`
-    );
+    console.log(`✅ Move complete:`, {
+      fileName: fileData.name,
+      fileId: fileId,
+      fromPath: oldPath,
+      toPath: targetPath,
+      logResult: logResult,
+    });
+
     return { success: true };
   } catch (error) {
-    console.error("Error moving file:", error);
+    console.error("❌ Error moving file:", error);
     throw new Error("Error moving file: " + error.message);
   }
 };
@@ -715,6 +815,10 @@ const updateChildrenPathsForMove = async (
   newFullPath
 ) => {
   try {
+    console.log(
+      `🔄 Updating children paths for move from "${oldFullPath}" to "${newFullPath}"`
+    );
+
     // Find all files that have paths starting with the old folder path
     const filesRef = collection(db, "schools", schoolId, "files");
     const q = query(
@@ -725,6 +829,7 @@ const updateChildrenPathsForMove = async (
 
     const snapshot = await getDocs(q);
     const batch = writeBatch(db);
+    let updatedCount = 0;
 
     snapshot.forEach((doc) => {
       const data = doc.data();
@@ -738,24 +843,38 @@ const updateChildrenPathsForMove = async (
           path: newPath,
           updatedAt: serverTimestamp(),
         });
+        updatedCount++;
       }
     });
 
     await batch.commit();
-    console.log(`Updated children paths from ${oldFullPath} to ${newFullPath}`);
+    console.log(
+      `✅ Updated ${updatedCount} children paths from ${oldFullPath} to ${newFullPath}`
+    );
   } catch (error) {
-    console.error("Error updating children paths for move:", error);
+    console.error("❌ Error updating children paths for move:", error);
     throw error;
   }
 };
 
 // Create file version (backup before replace/delete)
-export const createFileVersion = async (schoolId, fileData, user) => {
+export const createFileVersion = async (
+  schoolId,
+  fileData,
+  user,
+  skipAuditLog = false
+) => {
   try {
     if (!fileData.storageId || !fileData.downloadURL) {
       console.log("No storage file to version for:", fileData.name);
       return { success: false, error: "No storage file to version" };
     }
+
+    console.log(
+      `📋 Creating version for: ${fileData.name}${
+        skipAuditLog ? " (nested operation)" : ""
+      }`
+    );
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const versionDoc = {
@@ -782,24 +901,33 @@ export const createFileVersion = async (schoolId, fileData, user) => {
       versionDoc
     );
 
-    // Log version creation
-    await logFileAction(schoolId, {
-      action: "create_version",
-      fileName: fileData.name,
-      fileId: fileData.id,
-      folder: fileData.folder,
-      path: fileData.path,
-      user: user,
-      metadata: {
-        versionTimestamp: timestamp,
-        storageId: fileData.storageId,
+    // Only log version creation if it's not part of another operation (like delete)
+    const logResult = await logFileAction(
+      schoolId,
+      {
+        action: "create_version",
+        fileName: fileData.name,
+        fileId: fileData.id,
+        folder: fileData.folder,
+        path: fileData.path,
+        user: user,
+        metadata: {
+          versionTimestamp: timestamp,
+          storageId: fileData.storageId,
+        },
       },
+      skipAuditLog
+    );
+
+    console.log(`✅ Version created:`, {
+      fileName: fileData.name,
+      versionTimestamp: timestamp,
+      logResult: logResult,
     });
 
-    console.log(`Created version for ${fileData.name}`);
     return { success: true, versionTimestamp: timestamp };
   } catch (error) {
-    console.error("Error creating file version:", error);
+    console.error("❌ Error creating file version:", error);
     return { success: false, error: error.message };
   }
 };
@@ -807,7 +935,7 @@ export const createFileVersion = async (schoolId, fileData, user) => {
 // Get file versions
 export const getFileVersions = async (schoolId, fileId) => {
   try {
-    console.log(`Getting versions for file: ${fileId}`);
+    console.log(`📋 Getting versions for file: ${fileId}`);
 
     const versionsRef = collection(db, "schools", schoolId, "fileVersions");
     const q = query(
@@ -835,10 +963,10 @@ export const getFileVersions = async (schoolId, fileId) => {
       });
     });
 
-    console.log(`Found ${versions.length} versions`);
+    console.log(`📋 Found ${versions.length} versions for file ${fileId}`);
     return versions;
   } catch (error) {
-    console.error("Error getting file versions:", error);
+    console.error("❌ Error getting file versions:", error);
     return [];
   }
 };
@@ -846,7 +974,7 @@ export const getFileVersions = async (schoolId, fileId) => {
 // Restore file from version
 export const restoreFileVersion = async (schoolId, fileId, versionId, user) => {
   try {
-    console.log(`Restoring file ${fileId} to version ${versionId}`);
+    console.log(`🔄 Restoring file ${fileId} to version ${versionId}`);
 
     // Get current file
     const fileRef = doc(db, "schools", schoolId, "files", fileId);
@@ -878,8 +1006,8 @@ export const restoreFileVersion = async (schoolId, fileId, versionId, user) => {
       updatedAt: serverTimestamp(),
     });
 
-    // Log the restore action
-    await logFileAction(schoolId, {
+    // Enhanced logging for restore action
+    const logResult = await logFileAction(schoolId, {
       action: "restore_version",
       fileName: fileData.name,
       fileId: fileId,
@@ -892,12 +1020,16 @@ export const restoreFileVersion = async (schoolId, fileId, versionId, user) => {
       },
     });
 
-    console.log(
-      `Successfully restored ${fileData.name} to version ${versionData.versionTimestamp}`
-    );
+    console.log(`✅ Version restore complete:`, {
+      fileName: fileData.name,
+      fileId: fileId,
+      versionTimestamp: versionData.versionTimestamp,
+      logResult: logResult,
+    });
+
     return { success: true };
   } catch (error) {
-    console.error("Error restoring file version:", error);
+    console.error("❌ Error restoring file version:", error);
     throw new Error("Error restoring file version: " + error.message);
   }
 };
@@ -906,7 +1038,7 @@ export const restoreFileVersion = async (schoolId, fileId, versionId, user) => {
 export const searchFiles = async (schoolId, searchQuery, folder = null) => {
   try {
     console.log(
-      `Searching files: "${searchQuery}" in ${folder || "all folders"}`
+      `🔍 Searching files: "${searchQuery}" in ${folder || "all folders"}`
     );
 
     const filesRef = collection(db, "schools", schoolId, "files");
@@ -960,10 +1092,10 @@ export const searchFiles = async (schoolId, searchQuery, folder = null) => {
           ))
     );
 
-    console.log(`Search found ${filteredFiles.length} files`);
+    console.log(`🔍 Search found ${filteredFiles.length} files`);
     return filteredFiles;
   } catch (error) {
-    console.error("Error searching files:", error);
+    console.error("❌ Error searching files:", error);
     throw new Error("Error searching files: " + error.message);
   }
 };
@@ -971,7 +1103,7 @@ export const searchFiles = async (schoolId, searchQuery, folder = null) => {
 // Get file analytics
 export const getFileAnalytics = async (schoolId, folder = null) => {
   try {
-    console.log(`Getting analytics for ${schoolId}/${folder || "all"}`);
+    console.log(`📊 Getting analytics for ${schoolId}/${folder || "all"}`);
 
     const filesRef = collection(db, "schools", schoolId, "files");
     let q = query(filesRef, where("isDeleted", "==", false));
@@ -1013,7 +1145,7 @@ export const getFileAnalytics = async (schoolId, folder = null) => {
       }
     });
 
-    return {
+    const analytics = {
       totalFiles: fileCount,
       totalFolders: folderCount,
       totalSize: totalSize,
@@ -1021,8 +1153,11 @@ export const getFileAnalytics = async (schoolId, folder = null) => {
       contentTypes: contentTypes,
       uploaders: uploaders,
     };
+
+    console.log(`📊 Analytics complete:`, analytics);
+    return analytics;
   } catch (error) {
-    console.error("Error getting file analytics:", error);
+    console.error("❌ Error getting file analytics:", error);
     throw new Error("Error getting file analytics: " + error.message);
   }
 };

@@ -129,10 +129,13 @@ const Sidebar = ({
     return !selectedSchool; // Disable other items if no school selected
   };
 
+  // Determine if sidebar should be in compact mode (yearbook proofing ONLY)
+  const isYearbookCompact = activeView === "yearbook-proofing";
+
   return (
-    <div className="sidebar">
-      {/* Show warning for studio users when no school is selected */}
-      {userRole === "studio" && !selectedSchool && (
+    <div className={`sidebar ${isYearbookCompact ? "yearbook-compact" : ""}`}>
+      {/* Show warning for studio users when no school is selected - hide in compact mode */}
+      {userRole === "studio" && !selectedSchool && !isYearbookCompact && (
         <div className="warning-card">
           <div className="warning-title">⚠️ No School Selected</div>
           <div className="warning-text">
@@ -153,49 +156,57 @@ const Sidebar = ({
                 activeView === item.id && !disabled ? "nav-item-active" : ""
               } ${disabled ? "nav-item-disabled" : ""}`}
               onClick={() => !disabled && onViewChange(item.id)}
+              title={isYearbookCompact ? item.label : undefined} // Show tooltip in compact mode
             >
               <Icon style={{ width: "18px", height: "18px" }} />
-              {item.label}
-              {disabled && <span className="nav-item-lock">🔒</span>}
+              {/* Only show text labels when NOT in yearbook compact mode */}
+              {!isYearbookCompact && item.label}
+              {/* Only show lock icon when NOT in yearbook compact mode */}
+              {disabled && !isYearbookCompact && (
+                <span className="nav-item-lock">🔒</span>
+              )}
             </div>
           );
         })}
       </div>
 
-      {selectedSchool && enabledExportOptions.length > 0 && (
-        <div className="nav-section">
-          <div className="nav-section-title">Quick Actions</div>
+      {/* Hide export section in compact mode */}
+      {selectedSchool &&
+        enabledExportOptions.length > 0 &&
+        !isYearbookCompact && (
+          <div className="nav-section">
+            <div className="nav-section-title">Quick Actions</div>
 
-          <div className="export-dropdown">
-            <button
-              className="export-button"
-              onClick={() => setExportMenuOpen(!exportMenuOpen)}
-            >
-              <Download style={{ width: "16px", height: "16px" }} />
-              Export Data
-              <ChevronDown style={{ width: "16px", height: "16px" }} />
-            </button>
+            <div className="export-dropdown">
+              <button
+                className="export-button"
+                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+              >
+                <Download style={{ width: "16px", height: "16px" }} />
+                Export Data
+                <ChevronDown style={{ width: "16px", height: "16px" }} />
+              </button>
 
-            {exportMenuOpen && (
-              <div className="export-menu">
-                {enabledExportOptions.map((option) => {
-                  const Icon = option.icon;
-                  return (
-                    <div
-                      key={option.id}
-                      className="export-menu-item"
-                      onClick={() => handleExportAction(option)}
-                    >
-                      <Icon style={{ width: "16px", height: "16px" }} />
-                      {option.label}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+              {exportMenuOpen && (
+                <div className="export-menu">
+                  {enabledExportOptions.map((option) => {
+                    const Icon = option.icon;
+                    return (
+                      <div
+                        key={option.id}
+                        className="export-menu-item"
+                        onClick={() => handleExportAction(option)}
+                      >
+                        <Icon style={{ width: "16px", height: "16px" }} />
+                        {option.label}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
     </div>
   );
 };
