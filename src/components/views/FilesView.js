@@ -31,6 +31,7 @@ import {
   ArrowUp,
   RotateCcw,
 } from "lucide-react";
+import JSZip from "jszip";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../services/firebase";
 import {
@@ -71,6 +72,8 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
   const [draggedFile, setDraggedFile] = useState(null);
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [dragOverParent, setDragOverParent] = useState(false);
+  const [isDraggingInternal, setIsDraggingInternal] = useState(false);
+  const [dragStarted, setDragStarted] = useState(false);
   const [movingFiles, setMovingFiles] = useState(new Set());
   const [moveProgress, setMoveProgress] = useState(0);
   const [moveStats, setMoveStats] = useState(null);
@@ -83,8 +86,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [auditSearchTerm, setAuditSearchTerm] = useState("");
   const [auditFilterAction, setAuditFilterAction] = useState("all");
-  const [isDraggingInternal, setIsDraggingInternal] = useState(false);
-  const [dragStarted, setDragStarted] = useState(false);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
 
   const uploadCancelRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -840,6 +842,7 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
     console.log("selectedFileIds changed to:", selectedFileIds.size, "files");
     console.trace("Stack trace for selection change");
   }, [selectedFileIds]);
+
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       if (isDraggingInternal && dragStarted && Date.now() - dragStarted > 200) {
@@ -1521,10 +1524,17 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       "upload",
     ];
 
-    return undoableActions.includes(logEntry.action);
+    const canUndo = undoableActions.includes(logEntry.action);
+    console.log(
+      `Can undo ${logEntry.action}?`,
+      canUndo,
+      "for file:",
+      logEntry.fileName
+    );
+    return canUndo;
   };
 
-  // Enhanced download functionality with better fallbacks
+  // Enhanced download functionality with JSZip
   const handleDownloadZip = async () => {
     if (selectedFileIds.size === 0) {
       setUploadResult({
@@ -1540,38 +1550,126 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       return;
     }
 
-    try {
-      // Import JSZip dynamically if available, otherwise show placeholder
-      try {
-        // This would be the real implementation with JSZip
-        // const JSZip = await import('jszip');
-        // ... ZIP creation logic ...
+    const selectedFileObjects = getSelectedFileObjects();
+    console.log("Creating ZIP for:", selectedFileObjects.length, "files");
 
-        // For now, show development message
-        setUploadResult({
-          success: false,
-          title: "ZIP Download Coming Soon",
-          message: "ZIP download functionality is being developed.",
-          details: [
-            `Selected files: ${selectedFileIds.size}`,
-            "This feature will create a ZIP file of all selected files",
-            "You'll be able to choose where to save the ZIP file",
-            "Use individual downloads for now by right-clicking files",
-          ],
-        });
-      } catch (importError) {
-        throw new Error("ZIP library not available");
+    try {
+      const zip = new JSZip();
+
+      let successCount = 0;
+      let failCount = 0;
+      const failedFiles = [];
+
+      // Add files to ZIP
+      for (const file of selectedFileObjects) {
+        try {
+          if (file.downloadURL && file.type === "file") {
+            console.log("Adding to ZIP:", file.name);
+
+            // Fetch file content
+            const response = await fetch(file.downloadURL);
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}: ${response.statusText}`
+              );
+            }
+
+            const blob = await response.blob();
+            zip.file(file.name, blob);
+            successCount++;
+          } else if (file.type === "folder") {
+            console.log(`Skipping folder: ${file.name}`);
+            failCount++;
+            failedFiles.push({
+              name: file.name,
+              reason: "Folders cannot be added to ZIP",
+            });
+          } else {
+            console.error(`No download URL for file: ${file.name}`);
+            failCount++;
+            failedFiles.push({
+              name: file.name,
+              reason: "No download URL available",
+            });
+          }
+        } catch (error) {
+          console.error(`Error adding ${file.name} to ZIP:`, error);
+          failCount++;
+          failedFiles.push({ name: file.name, reason: error.message });
+        }
       }
+
+      if (successCount === 0) {
+        throw new Error("No files could be added to ZIP");
+      }
+
+      console.log("Generating ZIP file...");
+
+      // Generate ZIP file
+      const content = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: {
+          level: 6,
+        },
+      });
+
+      // Create download link
+      const url = window.URL.createObjectURL(content);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = url;
+      downloadLink.download = `files_${new Date()
+        .toISOString()
+        .slice(0, 10)}.zip`;
+      downloadLink.style.display = "none";
+
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+
+      // Clean up object URL
+      window.URL.revokeObjectURL(url);
+
+      setUploadResult({
+        success: failCount === 0,
+        title:
+          failCount === 0
+            ? "ZIP Download Complete"
+            : "ZIP Download Completed with Issues",
+        message:
+          failCount === 0
+            ? `Successfully created ZIP with ${successCount} files.`
+            : `Created ZIP with ${successCount} files, ${failCount} failed.`,
+        stats: {
+          totalCount: selectedFileObjects.length,
+          successCount: successCount,
+          failedCount: failCount,
+        },
+        details: [
+          `Total selected: ${selectedFileObjects.length}`,
+          `Files in ZIP: ${successCount}`,
+          ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
+          `ZIP file name: files_${new Date().toISOString().slice(0, 10)}.zip`,
+          "Check your browser's Downloads folder",
+          "ZIP file created locally - no external network access required",
+          ...failedFiles.slice(0, 3).map((f) => `• ${f.name}: ${f.reason}`),
+          ...(failedFiles.length > 3
+            ? [`• ... and ${failedFiles.length - 3} more`]
+            : []),
+        ],
+      });
     } catch (error) {
       console.error("Error creating ZIP:", error);
+
       setUploadResult({
         success: false,
         title: "ZIP Download Failed",
         message: "Could not create ZIP file.",
         details: [
           `Error: ${error.message}`,
-          "ZIP functionality requires additional libraries",
-          "Use individual file downloads for now",
+          "This may be due to file access restrictions",
+          "Try using 'Download to Folder' for individual files instead",
+          "Or contact support if the issue persists",
         ],
       });
     }
@@ -1592,216 +1690,161 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
       return;
     }
 
+    // Check if File System Access API is available
+    if ("showDirectoryPicker" in window && window.isSecureContext) {
+      // Show permission explanation modal first
+      setShowPermissionModal(true);
+    } else {
+      // Directly proceed with fallback
+      proceedWithFallbackDownload();
+    }
+  };
+
+  const handlePermissionModalContinue = async () => {
+    setShowPermissionModal(false);
+    await proceedWithFolderDownload();
+  };
+
+  const proceedWithFolderDownload = async () => {
     const selectedFileObjects = getSelectedFileObjects();
+    console.log(
+      "Starting folder download process for:",
+      selectedFileObjects.length,
+      "files"
+    );
 
     try {
-      // Check if we're in a secure context and have the API
-      const hasFileSystemAccess =
-        "showDirectoryPicker" in window &&
-        window.isSecureContext &&
-        !window.location.href.includes("sandbox");
+      console.log("Using File System Access API for folder selection");
 
-      if (hasFileSystemAccess) {
-        try {
-          // Let user pick a directory
-          const directoryHandle = await window.showDirectoryPicker();
+      // Let user pick a directory ONCE
+      const directoryHandle = await window.showDirectoryPicker();
+      console.log("Directory selected:", directoryHandle.name);
 
-          let successCount = 0;
-          let failCount = 0;
-          const failedFiles = [];
+      let successCount = 0;
+      let failCount = 0;
+      const failedFiles = [];
 
-          for (const file of selectedFileObjects) {
-            try {
-              if (file.downloadURL && file.type === "file") {
-                // Fetch the file
-                const response = await fetch(file.downloadURL);
-                if (!response.ok) {
-                  throw new Error(
-                    `HTTP ${response.status}: ${response.statusText}`
-                  );
-                }
-                const blob = await response.blob();
-
-                // Create file in the selected directory
-                const fileHandle = await directoryHandle.getFileHandle(
-                  file.name,
-                  { create: true }
-                );
-                const writable = await fileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-
-                successCount++;
-              } else if (file.type === "folder") {
-                console.log(`Skipping folder: ${file.name}`);
-                failCount++;
-                failedFiles.push({
-                  name: file.name,
-                  reason: "Folders cannot be downloaded",
-                });
-              } else {
-                console.error(`No download URL for file: ${file.name}`);
-                failCount++;
-                failedFiles.push({
-                  name: file.name,
-                  reason: "No download URL available",
-                });
-              }
-            } catch (fileError) {
-              console.error(`Error downloading ${file.name}:`, fileError);
-              failCount++;
-              failedFiles.push({ name: file.name, reason: fileError.message });
-            }
-          }
-
-          setUploadResult({
-            success: failCount === 0,
-            title:
-              failCount === 0
-                ? "Download Complete"
-                : "Download Completed with Issues",
-            message:
-              failCount === 0
-                ? `Successfully downloaded ${successCount} files.`
-                : `Downloaded ${successCount} files successfully, ${failCount} failed.`,
-            stats: {
-              totalCount: selectedFileObjects.length,
-              successCount: successCount,
-              failedCount: failCount,
-            },
-            details: [
-              `Total selected: ${selectedFileObjects.length}`,
-              `Files downloaded: ${successCount}`,
-              ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
-              `Downloaded to: ${directoryHandle.name}`,
-              ...failedFiles.slice(0, 5).map((f) => `• ${f.name}: ${f.reason}`),
-              ...(failedFiles.length > 5
-                ? [`• ... and ${failedFiles.length - 5} more`]
-                : []),
-            ],
-          });
-        } catch (fsError) {
-          if (fsError.name === "AbortError") {
-            // User cancelled the directory picker
-            console.log("User cancelled directory picker");
-            return;
-          }
-          throw fsError;
-        }
-      } else {
-        // Fallback: Traditional individual downloads
-        console.log("Using fallback download method");
-
-        let successCount = 0;
-        let failCount = 0;
-        const failedFiles = [];
-
-        for (let i = 0; i < selectedFileObjects.length; i++) {
-          const file = selectedFileObjects[i];
-
-          try {
-            if (file.downloadURL && file.type === "file") {
-              // Create temporary download link
-              const downloadLink = document.createElement("a");
-              downloadLink.href = file.downloadURL;
-              downloadLink.download = file.name;
-              downloadLink.target = "_blank";
-              downloadLink.style.display = "none";
-
-              // Add to DOM, click, and remove
-              document.body.appendChild(downloadLink);
-              downloadLink.click();
-              document.body.removeChild(downloadLink);
-
-              successCount++;
-
-              // Add delay between downloads to avoid browser blocking
-              if (i < selectedFileObjects.length - 1) {
-                await new Promise((resolve) => setTimeout(resolve, 800));
-              }
-            } else if (file.type === "folder") {
-              console.log(`Skipping folder: ${file.name}`);
-              failCount++;
-              failedFiles.push({
-                name: file.name,
-                reason: "Folders cannot be downloaded",
-              });
-            } else {
-              console.error(`No download URL for file: ${file.name}`);
-              failCount++;
-              failedFiles.push({
-                name: file.name,
-                reason: "No download URL available",
-              });
-            }
-          } catch (error) {
-            console.error(`Error downloading ${file.name}:`, error);
-            failCount++;
-            failedFiles.push({ name: file.name, reason: error.message });
-          }
-        }
-
+      // Show progress for large batches
+      if (selectedFileObjects.length > 10) {
         setUploadResult({
-          success: failCount === 0,
-          title:
-            failCount === 0
-              ? "Download Started"
-              : "Download Started with Issues",
-          message:
-            failCount === 0
-              ? `Successfully started download of ${successCount} files.`
-              : `Started download of ${successCount} files, ${failCount} failed.`,
-          stats: {
-            totalCount: selectedFileObjects.length,
-            successCount: successCount,
-            failedCount: failCount,
-          },
+          success: true,
+          title: "Download In Progress",
+          message: `Downloading ${selectedFileObjects.length} files to ${directoryHandle.name}...`,
           details: [
-            `Total selected: ${selectedFileObjects.length}`,
-            `Downloads started: ${successCount}`,
-            ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
-            "Files will appear in your browser's default downloads folder",
-            "Note: Your browser doesn't support direct folder selection",
-            "Consider using a modern browser like Chrome or Edge for better download experience",
-            ...failedFiles.slice(0, 3).map((f) => `• ${f.name}: ${f.reason}`),
-            ...(failedFiles.length > 3
-              ? [`• ... and ${failedFiles.length - 3} more`]
-              : []),
+            "Please wait while files are being downloaded",
+            "Do not close this window",
+            "Progress will be shown when complete",
           ],
         });
       }
-    } catch (error) {
-      console.error("Error downloading to folder:", error);
 
-      // Provide more specific error messages
-      let errorDetails = [`Error: ${error.message}`];
+      for (let i = 0; i < selectedFileObjects.length; i++) {
+        const file = selectedFileObjects[i];
+        console.log(
+          `Downloading ${i + 1}/${selectedFileObjects.length}: ${file.name}`
+        );
 
-      if (error.message.includes("showDirectoryPicker")) {
-        errorDetails = [
-          "Your browser doesn't support direct folder downloads",
-          "This feature requires a modern browser with File System Access API",
-          "Try using Chrome, Edge, or another Chromium-based browser",
-          "Alternative: Files will download to your default downloads folder instead",
-        ];
-      } else if (
-        error.message.includes("cross-origin") ||
-        error.message.includes("iframe")
-      ) {
-        errorDetails = [
-          "Download blocked due to security restrictions",
-          "This may be due to the app running in an embedded frame",
-          "Try opening the app in a new tab or window",
-          "Files will download individually to your downloads folder instead",
-        ];
+        try {
+          if (file.downloadURL && file.type === "file") {
+            // Fetch the file
+            const response = await fetch(file.downloadURL);
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}: ${response.statusText}`
+              );
+            }
+            const blob = await response.blob();
+
+            // Create file in the selected directory
+            const fileHandle = await directoryHandle.getFileHandle(file.name, {
+              create: true,
+            });
+            const writable = await fileHandle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+
+            successCount++;
+          } else if (file.type === "folder") {
+            console.log(`Skipping folder: ${file.name}`);
+            failCount++;
+            failedFiles.push({
+              name: file.name,
+              reason: "Folders cannot be downloaded",
+            });
+          } else {
+            console.error(`No download URL for file: ${file.name}`);
+            failCount++;
+            failedFiles.push({
+              name: file.name,
+              reason: "No download URL available",
+            });
+          }
+        } catch (fileError) {
+          console.error(`Error downloading ${file.name}:`, fileError);
+          failCount++;
+          failedFiles.push({ name: file.name, reason: fileError.message });
+        }
       }
 
       setUploadResult({
-        success: false,
-        title: "Folder Download Failed",
-        message: "Could not download files to a specific folder.",
-        details: errorDetails,
+        success: failCount === 0,
+        title:
+          failCount === 0
+            ? "Download Complete"
+            : "Download Completed with Issues",
+        message:
+          failCount === 0
+            ? `Successfully downloaded ${successCount} files to ${directoryHandle.name}.`
+            : `Downloaded ${successCount} files successfully, ${failCount} failed.`,
+        stats: {
+          totalCount: selectedFileObjects.length,
+          successCount: successCount,
+          failedCount: failCount,
+        },
+        details: [
+          `Total selected: ${selectedFileObjects.length}`,
+          `Files downloaded: ${successCount}`,
+          ...(failCount > 0 ? [`Failed: ${failCount}`] : []),
+          `Downloaded to: ${directoryHandle.name}`,
+          "All files saved to the folder you selected",
+          ...failedFiles.slice(0, 3).map((f) => `• ${f.name}: ${f.reason}`),
+          ...(failedFiles.length > 3
+            ? [`• ... and ${failedFiles.length - 3} more`]
+            : []),
+        ],
       });
+    } catch (fsError) {
+      if (fsError.name === "AbortError") {
+        // User cancelled the directory picker
+        console.log("User cancelled directory picker");
+        return;
+      }
+
+      console.error("Folder download failed, falling back to ZIP:", fsError);
+      proceedWithFallbackDownload();
     }
+  };
+
+  const proceedWithFallbackDownload = () => {
+    setUploadResult({
+      success: false,
+      title: "Folder Selection Not Supported",
+      message: "Your browser doesn't support direct folder downloads.",
+      details: [
+        "This feature requires a modern browser with File System Access API support",
+        "Try using Chrome, Edge, or another Chromium-based browser",
+        "Alternative: Use 'Download ZIP' to get all files in one archive",
+        "Or the files will download individually to your default Downloads folder",
+        "",
+        "Would you like to create a ZIP file instead?",
+      ],
+    });
+
+    // Auto-trigger ZIP download as fallback
+    setTimeout(() => {
+      setUploadResult(null);
+      handleDownloadZip();
+    }, 3000);
   };
 
   const handleDownloadFile = async (file) => {
@@ -2162,6 +2205,128 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
   return (
     <div className="files-view">
       {/* All modals and dialogs - same as before */}
+      {/* Browser Permission Explanation Modal */}
+      {showPermissionModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowPermissionModal(false)}
+        >
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-icon-container modal-info-icon">
+                <Info style={{ width: "24px", height: "24px" }} />
+              </div>
+              <div>
+                <h2 className="modal-title">Browser Permission Required</h2>
+              </div>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-content">
+                Your browser will ask for permission to access folders on your
+                computer. This allows us to save all {selectedFileIds.size}{" "}
+                selected files directly to a folder you choose.
+              </div>
+
+              <div className="modal-details">
+                <div className="modal-details-title">
+                  <Info style={{ width: "16px", height: "16px" }} />
+                  What to Expect
+                </div>
+                <div
+                  style={{
+                    padding: "1rem",
+                    backgroundColor: "#f8fafc",
+                    borderRadius: "0.5rem",
+                    border: "1px solid #e2e8f0",
+                    marginBottom: "1rem",
+                  }}
+                >
+                  <img
+                    src="/images/browser-permission-popup.png"
+                    alt="Browser permission dialog showing 'Let site edit files?' with Edit files and Cancel buttons"
+                    style={{
+                      width: "100%",
+                      maxWidth: "400px",
+                      height: "auto",
+                      borderRadius: "0.375rem",
+                      border: "1px solid #d1d5db",
+                      display: "block",
+                      margin: "0 auto",
+                    }}
+                  />
+                </div>
+                <div className="modal-details-list">
+                  <div className="modal-detail-item">
+                    1. Click "Continue" below to start the download process
+                  </div>
+                  <div className="modal-detail-item">
+                    2. Your browser will show a permission dialog (like the
+                    image above)
+                  </div>
+                  <div className="modal-detail-item">
+                    3. Click "Edit files" or "Allow" to grant permission
+                  </div>
+                  <div className="modal-detail-item">
+                    4. Choose the folder where you want to save all files
+                  </div>
+                  <div className="modal-detail-item">
+                    5. All {selectedFileIds.size} files will download to that
+                    folder automatically
+                  </div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: "0.75rem",
+                  backgroundColor: "#eff6ff",
+                  borderRadius: "0.5rem",
+                  border: "1px solid #bfdbfe",
+                  marginTop: "1rem",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "#1e40af",
+                    fontWeight: "500",
+                  }}
+                >
+                  💡 Why do we need this permission?
+                </div>
+                <div
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "#1e40af",
+                    marginTop: "0.25rem",
+                  }}
+                >
+                  This allows us to save files directly to your chosen folder
+                  instead of downloading them one by one to your Downloads
+                  folder.
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                onClick={() => setShowPermissionModal(false)}
+                className="modal-button modal-button-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePermissionModalContinue}
+                className="modal-button modal-button-primary"
+              >
+                Continue & Choose Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Confirmation Modal */}
       {deleteConfirmation && (
         <div
@@ -2352,7 +2517,14 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
                 <div className="modal-details">
                   <div className="modal-details-title">
                     <Info style={{ width: "16px", height: "16px" }} />
-                    Recent Activity ({getFilteredAuditLog().length} entries)
+                    Recent Activity ({
+                      getFilteredAuditLog().length
+                    } entries,{" "}
+                    {
+                      getFilteredAuditLog().filter((log) => canUndoAction(log))
+                        .length
+                    }{" "}
+                    undoable)
                   </div>
                   <div style={{ maxHeight: "400px", overflowY: "auto" }}>
                     {getFilteredAuditLog().map((log, index) => (
@@ -2401,31 +2573,37 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
                               <button
                                 onClick={() => handleUndoAction(log)}
                                 style={{
-                                  padding: "0.25rem 0.5rem",
+                                  padding: "0.375rem 0.75rem",
                                   fontSize: "0.75rem",
-                                  backgroundColor: "#fef3c7",
-                                  color: "#d97706",
-                                  border: "1px solid #f59e0b",
-                                  borderRadius: "0.25rem",
+                                  backgroundColor: "#dc2626",
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "0.375rem",
                                   cursor: "pointer",
-                                  fontWeight: "500",
+                                  fontWeight: "600",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.25rem",
                                   transition: "all 0.2s",
+                                  boxShadow: "0 1px 2px rgba(0, 0, 0, 0.1)",
                                 }}
                                 onMouseOver={(e) => {
-                                  e.target.style.backgroundColor = "#fcd34d";
+                                  e.target.style.backgroundColor = "#b91c1c";
+                                  e.target.style.transform = "translateY(-1px)";
                                 }}
                                 onMouseOut={(e) => {
-                                  e.target.style.backgroundColor = "#fef3c7";
+                                  e.target.style.backgroundColor = "#dc2626";
+                                  e.target.style.transform = "translateY(0)";
                                 }}
+                                title={`Undo this ${log.action.replace(
+                                  /_/g,
+                                  " "
+                                )} action`}
                               >
                                 <RotateCcw
-                                  style={{
-                                    width: "12px",
-                                    height: "12px",
-                                    marginRight: "0.25rem",
-                                  }}
+                                  style={{ width: "12px", height: "12px" }}
                                 />
-                                Undo
+                                UNDO
                               </button>
                             )}
                           </div>
@@ -2864,24 +3042,6 @@ const FilesView = ({ selectedSchool, userRole, user, schools }) => {
               : "School Files"}{" "}
             • {filteredFiles.length} items
           </p>
-        </div>
-        <div className="files-actions">
-          <button
-            onClick={handleDownloadZip}
-            className="button button-secondary"
-            disabled={selectedFileIds.size === 0}
-          >
-            <Archive style={{ width: "16px", height: "16px" }} />
-            Download ZIP ({selectedFileIds.size})
-          </button>
-          <button
-            onClick={handleDownloadToFolder}
-            className="button button-primary"
-            disabled={selectedFileIds.size === 0}
-          >
-            <Download style={{ width: "16px", height: "16px" }} />
-            Download to Folder ({selectedFileIds.size})
-          </button>
         </div>
       </div>
 

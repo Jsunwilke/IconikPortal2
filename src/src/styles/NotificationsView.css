@@ -1,0 +1,554 @@
+.notifications-view {
+  /* Base styles inherit from App.css */
+}
+
+.notifications-summary {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0.5rem 0 0 0;
+}
+
+.notifications-filters {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background-color: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #6b7280;
+}
+
+.filter-button:hover {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.filter-button.active {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.notifications-card {
+  background-color: white;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+  border: 1px solid #f1f5f9;
+}
+
+/* School Filter */
+.school-filter {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem;
+  background-color: #f8fafc;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+}
+
+.school-filter-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.school-filter-select {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  background-color: white;
+  cursor: pointer;
+}
+
+.school-filter-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.notifications-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  color: #6b7280;
+}
+
+.loading-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 1rem;
+  color: #3b82f6;
+}
+
+.notifications-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  color: #9ca3af;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 1rem;
+  color: #d1d5db;
+}
+
+.notifications-empty h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 0.5rem 0;
+}
+
+.notifications-empty p {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.notifications-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.notification-item {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  padding: 0 0.75rem 0.75rem 0.75rem;
+  max-width: 600px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s;
+}
+
+.notification-item:hover {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  transform: translateY(-1px);
+}
+
+.notification-unread {
+  border-left: 5px solid #3b82f6;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.notification-applied {
+  border-left: 5px solid #059669 !important;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%) !important;
+}
+
+/* Student Header - Fill the width */
+.student-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  margin: -0.25rem 0 0.25rem 0;
+}
+
+.student-info {
+  /* Fill all available space */
+}
+
+.student-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0.15rem 0 0.25rem 0;
+  letter-spacing: -0.025em;
+  padding-top: 0;
+  line-height: 0.9;
+}
+
+.student-details {
+  font-size: 1rem;
+  color: #6b7280;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.notification-badges {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.unread-badge,
+.applied-badge {
+  font-size: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.unread-badge {
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  color: white;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.3);
+}
+
+.applied-badge {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: white;
+  box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);
+}
+
+/* Changes Section - Use full width efficiently */
+.changes-section {
+  margin-bottom: 1rem;
+}
+
+.changes-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.changes-title::before {
+  content: "🔄";
+  font-size: 1.25rem;
+}
+
+.notification-changes-detailed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.notification-change-detailed {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+}
+
+.change-field-detailed {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  word-wrap: break-word;
+}
+
+.change-values {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1rem;
+  min-width: 0;
+}
+
+.old-value,
+.new-value {
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas,
+    "Liberation Mono", Menlo, monospace;
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.old-value {
+  color: #dc2626;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border: 1px solid #fecaca;
+}
+
+.new-value {
+  color: #059669;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 1px solid #bbf7d0;
+}
+
+.change-arrow {
+  color: #6b7280;
+  font-weight: 900;
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}
+
+.notification-changes-more {
+  font-size: 0.875rem;
+  color: #6b7280;
+  font-style: italic;
+  text-align: center;
+  padding: 0.5rem;
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  border-radius: 0.375rem;
+  font-weight: 500;
+}
+
+/* Footer - Use full width */
+.notification-footer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: center;
+  border-top: 2px solid #f1f5f9;
+  padding-top: 1rem;
+}
+
+.notification-meta {
+  font-size: 0.9rem;
+  color: #6b7280;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.notification-meta::before {
+  content: "⏰";
+  font-size: 1rem;
+}
+
+.notification-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mark-read-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+  flex-shrink: 0;
+}
+
+.mark-read-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
+}
+
+.applied-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #374151;
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.applied-checkbox:hover {
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  border-color: #059669;
+  transform: translateY(-1px);
+}
+
+.applied-checkbox input {
+  display: none;
+}
+
+.checkbox-icon {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d1d5db;
+  border-radius: 0.25rem;
+  background-color: white;
+  color: transparent;
+  transition: all 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+.checkbox-icon.checked {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border-color: #059669;
+  color: white;
+  box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);
+}
+
+.applied-checkbox:hover .checkbox-icon {
+  border-color: #059669;
+  transform: scale(1.05);
+}
+
+.notification-changes-detailed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.notification-changes-detailed-compact {
+  gap: 0.375rem;
+}
+
+.notification-change-detailed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  background-color: #f8fafc;
+  border-radius: 0.375rem;
+}
+
+.notification-change-detailed-compact {
+  padding: 0.375rem;
+  gap: 0.125rem;
+  border-radius: 0.25rem;
+}
+
+.change-field-detailed {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.change-field-detailed-compact {
+  font-size: 0.75rem;
+}
+
+.change-values {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.change-values-compact {
+  font-size: 0.75rem;
+  gap: 0.375rem;
+}
+
+.old-value {
+  color: #ef4444;
+  background-color: #fef2f2;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+}
+
+.old-value-compact {
+  padding: 0.1rem 0.25rem;
+  font-size: 0.7rem;
+}
+
+.new-value {
+  color: #059669;
+  background-color: #f0fdf4;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+}
+
+.new-value-compact {
+  padding: 0.1rem 0.25rem;
+  font-size: 0.7rem;
+}
+
+.change-arrow {
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.notification-changes-more {
+  font-size: 0.75rem;
+  color: #6b7280;
+  font-style: italic;
+  padding: 0.25rem 0.5rem;
+  background-color: #f1f5f9;
+  border-radius: 0.25rem;
+  text-align: center;
+}
+
+/* Studio Application Status */
+.notification-studio-status {
+  background-color: #fafbfc;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.studio-status-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 500;
+}
+
+.studio-status-checkbox {
+  opacity: 0;
+  position: absolute;
+  pointer-events: none;
+}
+
+.studio-status-icon {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #d1d5db;
+  border-radius: 0.25rem;
+  background-color: white;
+  color: transparent;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.studio-status-icon.checked {
+  background-color: #22c55e;
+  border-color: #22c55e;
+  color: white;
+}
+
+.studio-status-label:hover .studio-status-icon {
+  border-color: #22c55e;
+}
+
+.studio-status-text {
+  user-select: none;
+}

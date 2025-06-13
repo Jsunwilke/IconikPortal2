@@ -1,0 +1,17 @@
+.missing-students-list {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: #f9fafb;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid #e5e7eb;
+}
+
+.missing-student-item {
+  font-size: 0.875rem;
+  color: #374151;
+  margin-bottom: 0.25rem;
+  padding: 0.25rem 0;
+}
+
+/* Other modal styles inherit from ExportResultModal.css */
